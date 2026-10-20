@@ -130,7 +130,7 @@ Le projet est composé de cinq applications Spring Boot :
 flowchart TB
     U([Client / Frontend])
 
-    GW["<b>api-gateway</b><br/>Spring Cloud Gateway<br/>Port 8080"]
+    GW["<b>gateway-service</b><br/>Spring Cloud Gateway<br/>Port 8080"]
     EU["<b>eureka-server</b><br/>Netflix Eureka<br/>Port 8761"]
 
     subgraph MS [Services métier]
@@ -154,11 +154,31 @@ flowchart TB
 | Application | Rôle | Port |
 |---|---|---|
 | `eureka-server` | Serveur de découverte de services | **8761** |
-| `api-gateway` | Point d'entrée unique, routage vers les services | **8080** |
+| `gateway-service` | Point d'entrée unique, routage vers les services | **8080** |
 | `service-abonnements` | Plans et abonnements | **8081** |
 | `service-facturation` | Factures et lignes de facturation (service principal) | **8082** |
 | `service-clients` | Clients et paiements | **8083** |
 
+## Démarrage
+
+Ordre de lancement (IntelliJ, une configuration *Spring Boot* par application) :
+
+1. `eureka-server` (8761), tableau de bord : http://localhost:8761
+2. `service-abonnements` (8081), `service-facturation` (8082), `service-clients` (8083)
+3. `gateway-service` (8080)
+
+Accès aux API via la Gateway (routage dynamique, préfixe = nom du service en minuscules) :
+
+| URL | Service |
+|---|---|
+| http://localhost:8080/service-abonnements/plans | `service-abonnements` |
+| http://localhost:8080/service-abonnements/subscriptions | `service-abonnements` |
+| http://localhost:8080/service-facturation/invoices | `service-facturation` |
+| http://localhost:8080/service-clients/clients | `service-clients` |
+| http://localhost:8080/service-clients/payments | `service-clients` |
+
+Routage statique (optionnel) : lancer la Gateway avec le profil `statique`, les chemins sont alors exposés sans préfixe (`/clients`, `/plans`, `/invoices`, ...).
+
 ## Stack technique
 
-Java 17, Spring Boot 3, Spring Cloud (Eureka, Gateway, OpenFeign), Maven.
+Java 17, Spring Boot 3.5.6, Spring Cloud 2025.0.0 (Eureka, Gateway reactive), Maven.

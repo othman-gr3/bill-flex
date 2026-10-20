@@ -26,6 +26,8 @@
         <module>service-abonnements</module>
         <module>service-facturation</module>
         <module>service-clients</module>
+        <module>eureka-server</module>
+        <module>gateway-service</module>
     </modules>
 
     <dependencyManagement>
