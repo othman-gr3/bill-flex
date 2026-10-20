@@ -18,7 +18,7 @@ public class Client {
     @Column(nullable = false, unique = true)
     private String email;
 
-    @Column(nullable = false)
+    @Column(name = "numero_tva", nullable = false)
     private String numeroTVA;
 
     @Enumerated(EnumType.STRING)

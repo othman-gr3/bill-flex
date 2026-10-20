@@ -37,10 +37,10 @@ public class Invoice {
     @Column(nullable = false, length = 7)
     private String periode;
 
-    @Column(nullable = false, precision = 12, scale = 2)
+    @Column(name = "montant_ht", nullable = false, precision = 12, scale = 2)
     private BigDecimal montantHT = BigDecimal.ZERO;
 
-    @Column(nullable = false, precision = 12, scale = 2)
+    @Column(name = "montant_ttc", nullable = false, precision = 12, scale = 2)
     private BigDecimal montantTTC = BigDecimal.ZERO;
 
     @Column(nullable = false)
