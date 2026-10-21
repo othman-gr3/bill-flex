@@ -18,7 +18,7 @@ Le projet est composé de trois services métier :
 | `service-facturation` (service principal) | Génération et cycle de vie des factures et de leurs lignes |
 | `service-clients` | Comptes clients (entreprises) et paiements |
 
-Ces services sont enregistrés dans un serveur **Eureka** (découverte de services) et exposés via une **API Gateway** (point d'entrée unique).
+Ces services sont enregistrés dans un serveur **Eureka** (découverte de services), exposés via une **API Gateway** (point d'entrée unique) et configurés de façon centralisée par un **Config Server** (dossier `config-repo`).
 
 ## Diagramme de classes
 
@@ -124,7 +124,7 @@ classDiagram
 
 ## Architecture de projet
 
-Le projet est composé de cinq applications Spring Boot :
+Le projet est composé de six applications Spring Boot :
 
 ```mermaid
 flowchart TB
@@ -132,6 +132,8 @@ flowchart TB
 
     GW["<b>gateway-service</b><br/>Spring Cloud Gateway<br/>Port 8080"]
     EU["<b>eureka-server</b><br/>Netflix Eureka<br/>Port 8761"]
+    CS["<b>config-server</b><br/>Spring Cloud Config<br/>Port 8888"]
+    GIT[("config-repo<br/>(GitHub, branche main)")]
 
     subgraph MS [Services métier]
         direction LR
@@ -149,23 +151,49 @@ flowchart TB
     SF -. enregistrement .-> EU
     SC -. enregistrement .-> EU
     GW -. découverte .-> EU
+
+    SA -. configuration .-> CS
+    SF -. configuration .-> CS
+    SC -. configuration .-> CS
+    GW -. configuration .-> CS
+    CS --> GIT
 ```
 
 | Application | Rôle | Port |
 |---|---|---|
 | `eureka-server` | Serveur de découverte de services | **8761** |
+| `config-server` | Serveur de configuration centralisée (lit `config-repo`) | **8888** |
 | `gateway-service` | Point d'entrée unique, routage vers les services | **8080** |
 | `service-abonnements` | Plans et abonnements | **8081** |
 | `service-facturation` | Factures et lignes de facturation (service principal) | **8082** |
 | `service-clients` | Clients et paiements | **8083** |
+
+## Configuration centralisée
+
+Le dossier `config-repo/` (versionné sur la branche `main`) contient :
+
+| Fichier | Contenu |
+|---|---|
+| `application.properties` | Configuration **globale** partagée (URL Eureka, exposition actuator) |
+| `service-abonnements.properties` | Port 8081, base H2 `abonnementsdb` |
+| `service-facturation.properties` | Port 8082, base H2 `facturationdb` |
+| `service-clients.properties` | Port 8083, base H2 `clientsdb` |
+| `gateway-service.properties` | Port 8080, routage dynamique |
+
+Chaque service et la Gateway ne gardent en local que `spring.application.name` et `spring.config.import=configserver:http://localhost:8888`. `eureka-server` et `config-server` gardent leur configuration locale (problème d'amorçage).
+
+Preuve d'agrégation : `GET http://localhost:8888/service-clients/default` renvoie deux `propertySources` : `service-clients.properties` puis `application.properties` (global).
 
 ## Démarrage
 
 Ordre de lancement (IntelliJ, une configuration *Spring Boot* par application) :
 
 1. `eureka-server` (8761), tableau de bord : http://localhost:8761
-2. `service-abonnements` (8081), `service-facturation` (8082), `service-clients` (8083)
-3. `gateway-service` (8080)
+2. `config-server` (8888) : http://localhost:8888/service-clients/default
+3. `service-abonnements` (8081), `service-facturation` (8082), `service-clients` (8083)
+4. `gateway-service` (8080)
+
+Les services et la Gateway refusent de démarrer si le Config Server est injoignable (comportement voulu, *fail-fast*).
 
 Accès aux API via la Gateway (routage dynamique, préfixe = nom du service en minuscules) :
 
@@ -177,8 +205,8 @@ Accès aux API via la Gateway (routage dynamique, préfixe = nom du service en m
 | http://localhost:8080/service-clients/clients | `service-clients` |
 | http://localhost:8080/service-clients/payments | `service-clients` |
 
-Routage statique (optionnel) : lancer la Gateway avec le profil `statique`, les chemins sont alors exposés sans préfixe (`/clients`, `/plans`, `/invoices`, ...).
+Routage statique (optionnel) : lancer la Gateway avec le profil `statique` (fichier `config-repo/gateway-service-statique.properties`), les chemins sont alors exposés sans préfixe (`/clients`, `/plans`, `/invoices`, ...).
 
 ## Stack technique
 
-Java 17, Spring Boot 3.5.6, Spring Cloud 2025.0.0 (Eureka, Gateway reactive), Maven.
+Java 17, Spring Boot 3.5.6, Spring Cloud 2025.0.0 (Eureka, Gateway reactive, Config Server), Maven.
