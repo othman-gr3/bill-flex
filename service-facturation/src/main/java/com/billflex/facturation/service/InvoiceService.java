@@ -13,15 +13,21 @@ import com.billflex.facturation.repository.InvoiceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.billflex.facturation.dto.InvoiceDetailResponse;
+import com.billflex.facturation.feignclient.AbonnementsClient;
+import com.billflex.facturation.feignclient.ClientDto;
+import com.billflex.facturation.feignclient.ClientsClient;
+import com.billflex.facturation.feignclient.PlanDto;
+import com.billflex.facturation.feignclient.SubscriptionDto;
 import java.util.List;
-
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class InvoiceService {
 
     private final InvoiceRepository repository;
+    private final AbonnementsClient abonnementsClient;
+    private final ClientsClient clientsClient;
 
     @Transactional(readOnly = true)
     public List<InvoiceResponse> findAll() {
@@ -33,11 +39,43 @@ public class InvoiceService {
         return InvoiceResponse.from(getOrThrow(id));
     }
 
+    /** Invoice enriched with client and subscription data fetched through Feign. */
+    @Transactional(readOnly = true)
+    public InvoiceDetailResponse getDetail(Long id) {
+        Invoice invoice = getOrThrow(id);
+
+        ClientDto c = clientsClient.getClient(invoice.getClientId());
+        SubscriptionDto s = abonnementsClient.getSubscription(invoice.getSubscriptionId());
+        PlanDto p = abonnementsClient.getPlan(s.planId());
+
+        return new InvoiceDetailResponse(
+                InvoiceResponse.from(invoice),
+                new InvoiceDetailResponse.ClientInfo(c.id(), c.nom(), c.email(), c.numeroTVA(), c.modePaiement()),
+                new InvoiceDetailResponse.AbonnementInfo(s.id(), s.statut(), p.id(), p.nom()));
+    }
+
     public InvoiceResponse create(InvoiceRequest r) {
+        // 1. Duplicate check BEFORE any remote call
         if (repository.existsBySubscriptionIdAndPeriode(r.subscriptionId(), r.periode())) {
             throw new DuplicateResourceException("Une facture existe déjà pour l'abonnement "
                     + r.subscriptionId() + " et la période " + r.periode());
         }
+
+        // 2. Subscription must exist (404 via Feign) and be ACTIVE
+        SubscriptionDto sub = abonnementsClient.getSubscription(r.subscriptionId());
+        if (!"ACTIVE".equals(sub.statut())) {
+            throw new InvalidStateException("Abonnement non actif : " + sub.statut());
+        }
+        if (!sub.clientId().equals(r.clientId())) {
+            throw new InvalidStateException("Le client ne correspond pas à l'abonnement");
+        }
+
+        // 3. Client must exist (404 via Feign) and be ACTIF
+        ClientDto client = clientsClient.getClient(r.clientId());
+        if (!"ACTIF".equals(client.statut())) {
+            throw new InvalidStateException("Client suspendu");
+        }
+
         Invoice invoice = new Invoice();
         invoice.setSubscriptionId(r.subscriptionId());
         invoice.setClientId(r.clientId());
@@ -79,7 +117,14 @@ public class InvoiceService {
     }
 
     public InvoiceResponse emettre(Long id) {
-        return changerStatut(id, StatutInvoice.EMISE);
+        Invoice invoice = getOrThrow(id);
+        // Client must still be ACTIF before issuing the invoice
+        ClientDto client = clientsClient.getClient(invoice.getClientId());
+        if (!"ACTIF".equals(client.statut())) {
+            throw new InvalidStateException("Client suspendu : émission impossible");
+        }
+        invoice.changerStatut(StatutInvoice.EMISE);
+        return InvoiceResponse.from(repository.save(invoice));
     }
 
     public InvoiceResponse payer(Long id) {

@@ -1,5 +1,6 @@
 package com.billflex.facturation.controller;
 
+import com.billflex.facturation.dto.InvoiceDetailResponse;
 import com.billflex.facturation.dto.InvoiceRequest;
 import com.billflex.facturation.dto.InvoiceResponse;
 import com.billflex.facturation.service.InvoiceService;
@@ -66,5 +67,10 @@ public class InvoiceController {
     @PatchMapping("/{id}/annuler")
     public InvoiceResponse annuler(@PathVariable Long id) {
         return service.annuler(id);
+    }
+
+    @GetMapping("/{id}/detail")
+    public ResponseEntity<InvoiceDetailResponse> detail(@PathVariable Long id) {
+        return ResponseEntity.ok(service.getDetail(id));
     }
 }
