@@ -1,0 +1,21 @@
+services:
+  mailpit:
+    image: axllent/mailpit
+    container_name: mailpit
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: tp
+      RABBITMQ_DEFAULT_PASS: tp123
+    volumes:
+      - tp-rabbitmq-data:/var/lib/rabbitmq
+
+volumes:
+  tp-rabbitmq-data:

@@ -1,0 +1,75 @@
+{
+  "info": {
+    "name": "Bill-Flex v5.0 - RabbitMQ et notifications",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "gateway", "value": "http://localhost:8080"},
+    {"key": "notification", "value": "http://localhost:8084"}
+  ],
+  "item": [
+    {
+      "name": "Emission et email",
+      "item": [
+        {
+          "name": "Emettre facture 3 - 200 et message",
+          "request": {"method": "PATCH", "header": [], "url": "{{gateway}}/service-facturation/invoices/3/emettre"},
+          "event": [{"listen": "test", "script": {"exec": [
+            "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+            "pm.test('Statut EMISE', function () { pm.expect(pm.response.json().statut).to.eql('EMISE'); });"
+          ]}}]
+        },
+        {
+          "name": "Facture absente - 404",
+          "request": {"method": "PATCH", "header": [], "url": "{{gateway}}/service-facturation/invoices/999/emettre"},
+          "event": [{"listen": "test", "script": {"exec": ["pm.test('Status is 404', function () { pm.response.to.have.status(404); });"]}}]
+        },
+        {
+          "name": "Deuxieme emission - 409",
+          "request": {"method": "PATCH", "header": [], "url": "{{gateway}}/service-facturation/invoices/2/emettre"},
+          "event": [{"listen": "test", "script": {"exec": ["pm.test('Status is 409', function () { pm.response.to.have.status(409); });"]}}]
+        }
+      ]
+    },
+    {
+      "name": "Notification directe",
+      "item": [
+        {
+          "name": "Email valide - 204",
+          "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"destinataire\":\"client@example.com\",\"objet\":\"Test\",\"contenu\":\"Bonjour\"}"}, "url": "{{notification}}/notifications/email"},
+          "event": [{"listen": "test", "script": {"exec": ["pm.test('Status is 204', function () { pm.response.to.have.status(204); });"]}}]
+        },
+        {
+          "name": "Email invalide - 400",
+          "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"destinataire\":\"bad\",\"objet\":\"Test\",\"contenu\":\"Bonjour\"}"}, "url": "{{notification}}/notifications/email"},
+          "event": [{"listen": "test", "script": {"exec": ["pm.test('Status is 400', function () { pm.response.to.have.status(400); });"]}}]
+        },
+        {
+          "name": "Sujet vide - 400",
+          "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"destinataire\":\"client@example.com\",\"objet\":\"\",\"contenu\":\"Bonjour\"}"}, "url": "{{notification}}/notifications/email"},
+          "event": [{"listen": "test", "script": {"exec": ["pm.test('Status is 400', function () { pm.response.to.have.status(400); });"]}}]
+        },
+        {
+          "name": "Mailpit arrete - 503",
+          "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"destinataire\":\"client@example.com\",\"objet\":\"Test\",\"contenu\":\"Bonjour\"}"}, "url": "{{notification}}/notifications/email"},
+          "event": [{"listen": "test", "script": {"exec": ["pm.test('Status is 503', function () { pm.response.to.have.status(503); });"]}}]
+        }
+      ]
+    },
+    {
+      "name": "Procedure differee",
+      "item": [
+        {
+          "name": "Emettre 2 factures consommateur arrete",
+          "request": {"method": "PATCH", "header": [], "url": "{{gateway}}/service-facturation/invoices/3/emettre"},
+          "description": "Arreter notification-service, préparer deux factures BROUILLON et répéter cette requête : réponses 200, Ready=2 dans RabbitMQ, aucune email dans Mailpit. Redémarrer notification-service : Ready et Unacked reviennent à 0 et deux emails apparaissent."
+        },
+        {
+          "name": "Broker arrete - emission reste 200",
+          "request": {"method": "PATCH", "header": [], "url": "{{gateway}}/service-facturation/invoices/3/emettre"},
+          "description": "Arrêter RabbitMQ avant l'appel. La réponse reste 200, la facture reste EMISE et une erreur AMQP est enregistrée dans les logs."
+        }
+      ]
+    }
+  ]
+}

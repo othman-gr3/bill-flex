@@ -5,6 +5,7 @@ import com.billflex.facturation.feignclient.ClientDto;
 import com.billflex.facturation.feignclient.ClientsClient;
 import com.billflex.facturation.feignclient.PlanDto;
 import com.billflex.facturation.feignclient.SubscriptionDto;
+import com.billflex.facturation.messaging.NotificationPublisher;
 import feign.FeignException;
 import feign.Request;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,9 @@ import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -42,6 +46,9 @@ class FacturationApiTest {
 
     @MockitoBean
     private ClientsClient clientsClient;
+
+    @MockitoBean
+    private NotificationPublisher notificationPublisher;
 
     @BeforeEach
     void stubRemote() {
@@ -159,6 +166,24 @@ class FacturationApiTest {
                 .andExpect(jsonPath("$.statut").value("EMISE"));
         mockMvc.perform(delete("/invoices/3"))
                 .andExpect(status().isConflict());
+        verify(notificationPublisher).publier(any());
+    }
+
+    @Test
+    void emettreInvoice_publishFailure_doesNotBreakResponse() throws Exception {
+        org.mockito.Mockito.doThrow(new org.springframework.amqp.AmqpConnectException(
+                new java.net.ConnectException("broker down")))
+                .when(notificationPublisher).publier(any());
+
+        mockMvc.perform(patch("/invoices/3/emettre"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void emettreInvoice_invalidTransition_publishesNothing() throws Exception {
+        mockMvc.perform(patch("/invoices/1/emettre"))
+                .andExpect(status().isConflict());
+        verify(notificationPublisher, never()).publier(any());
     }
 
     private String body(String periode) {

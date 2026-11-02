@@ -29,6 +29,7 @@
         <module>eureka-server</module>
         <module>gateway-service</module>
         <module>config-server</module>
+        <module>notification-service</module>
     </modules>
 
     <dependencyManagement>

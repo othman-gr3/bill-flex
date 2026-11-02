@@ -3,6 +3,7 @@ package com.billflex.facturation.service;
 import com.billflex.facturation.dto.InvoiceLineRequest;
 import com.billflex.facturation.dto.InvoiceRequest;
 import com.billflex.facturation.dto.InvoiceResponse;
+import com.billflex.facturation.dto.NotificationEmailDto;
 import com.billflex.facturation.exception.DuplicateResourceException;
 import com.billflex.facturation.exception.InvalidStateException;
 import com.billflex.facturation.exception.ResourceNotFoundException;
@@ -19,15 +20,24 @@ import com.billflex.facturation.feignclient.ClientDto;
 import com.billflex.facturation.feignclient.ClientsClient;
 import com.billflex.facturation.feignclient.PlanDto;
 import com.billflex.facturation.feignclient.SubscriptionDto;
+import com.billflex.facturation.messaging.NotificationPublisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.AmqpException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class InvoiceService {
 
+    private static final Logger log = LoggerFactory.getLogger(InvoiceService.class);
+
     private final InvoiceRepository repository;
     private final AbonnementsClient abonnementsClient;
     private final ClientsClient clientsClient;
+    private final NotificationPublisher notificationPublisher;
 
     @Transactional(readOnly = true)
     public List<InvoiceResponse> findAll() {
@@ -124,7 +134,45 @@ public class InvoiceService {
             throw new InvalidStateException("Client suspendu : émission impossible");
         }
         invoice.changerStatut(StatutInvoice.EMISE);
-        return InvoiceResponse.from(repository.save(invoice));
+        Invoice saved = repository.save(invoice);
+        if (client.email() != null && !client.email().isBlank()) {
+            NotificationEmailDto notification = new NotificationEmailDto(
+                    client.email(),
+                    "Facture n° " + saved.getId() + " émise",
+                    """
+                            Bonjour %s,
+
+                            Votre facture n° %d a été émise.
+                            Période : %s
+                            Montant TTC : %s
+                            Échéance : %s
+                            """.formatted(client.nom(), saved.getId(), saved.getPeriode(),
+                            saved.getMontantTTC(), saved.getEcheance()));
+            publierApresCommit(notification);
+        } else {
+            log.warn("Notification non publiée pour la facture {} : email client absent", saved.getId());
+        }
+        return InvoiceResponse.from(saved);
+    }
+
+    private void publierApresCommit(NotificationEmailDto notification) {
+        Runnable publish = () -> {
+            try {
+                notificationPublisher.publier(notification);
+            } catch (AmqpException ex) {
+                log.error("Publication RabbitMQ impossible pour une notification email", ex);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publish.run();
+                }
+            });
+        } else {
+            publish.run();
+        }
     }
 
     public InvoiceResponse payer(Long id) {
