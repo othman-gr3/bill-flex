@@ -66,6 +66,10 @@ public class GlobalExceptionHandler {
         }
         return build(HttpStatus.BAD_GATEWAY, "Erreur HTTP du service distant : " + ex.status(), null);
     }
+    @ExceptionHandler(ServiceExterneIndisponibleException.class)
+    public ResponseEntity<ApiError> serviceExterneIndisponible(ServiceExterneIndisponibleException ex) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), null);
+    }
     private ResponseEntity<ApiError> build(HttpStatus status, String message, Map<String, String> details) {
         return ResponseEntity.status(status)
                 .body(new ApiError(Instant.now(), status.value(), status.getReasonPhrase(), message, details));
