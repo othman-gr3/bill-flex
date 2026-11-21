@@ -1,5 +1,6 @@
 package com.billflex.facturation.service;
 
+import com.billflex.facturation.dto.InvoiceDetailResponse;
 import com.billflex.facturation.dto.InvoiceLineRequest;
 import com.billflex.facturation.dto.InvoiceRequest;
 import com.billflex.facturation.dto.InvoiceResponse;
@@ -7,26 +8,28 @@ import com.billflex.facturation.dto.NotificationEmailDto;
 import com.billflex.facturation.exception.DuplicateResourceException;
 import com.billflex.facturation.exception.InvalidStateException;
 import com.billflex.facturation.exception.ResourceNotFoundException;
+import com.billflex.facturation.feignclient.ClientDto;
+import com.billflex.facturation.feignclient.PlanDto;
+import com.billflex.facturation.feignclient.ResilientRequests;
+import com.billflex.facturation.feignclient.SubscriptionDto;
+import com.billflex.facturation.messaging.NotificationPublisher;
 import com.billflex.facturation.model.Invoice;
 import com.billflex.facturation.model.InvoiceLine;
 import com.billflex.facturation.model.StatutInvoice;
 import com.billflex.facturation.repository.InvoiceRepository;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import com.billflex.facturation.dto.InvoiceDetailResponse;
-import com.billflex.facturation.feignclient.AbonnementsClient;
-import com.billflex.facturation.feignclient.ClientDto;
-import com.billflex.facturation.feignclient.ClientsClient;
-import com.billflex.facturation.feignclient.PlanDto;
-import com.billflex.facturation.feignclient.SubscriptionDto;
-import com.billflex.facturation.messaging.NotificationPublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -35,8 +38,7 @@ public class InvoiceService {
     private static final Logger log = LoggerFactory.getLogger(InvoiceService.class);
 
     private final InvoiceRepository repository;
-    private final AbonnementsClient abonnementsClient;
-    private final ClientsClient clientsClient;
+    private final ResilientRequests resilientRequests;
     private final NotificationPublisher notificationPublisher;
 
     @Transactional(readOnly = true)
@@ -49,19 +51,32 @@ public class InvoiceService {
         return InvoiceResponse.from(getOrThrow(id));
     }
 
-    /** Invoice enriched with client and subscription data fetched through Feign. */
+    /**
+     * Detailed view in tolerant mode: if a remote service is down, data comes from the cache
+     * or the enrichment fields are null. If the rate limit is reached, only local data is returned.
+     */
+    @RateLimiter(name = "consultation", fallbackMethod = "consultationLimitee")
     @Transactional(readOnly = true)
     public InvoiceDetailResponse getDetail(Long id) {
         Invoice invoice = getOrThrow(id);
 
-        ClientDto c = clientsClient.getClient(invoice.getClientId());
-        SubscriptionDto s = abonnementsClient.getSubscription(invoice.getSubscriptionId());
-        PlanDto p = abonnementsClient.getPlan(s.planId());
+        ClientDto c = resilientRequests.getClientFb(invoice.getClientId());
+        SubscriptionDto s = resilientRequests.getSubscriptionFb(invoice.getSubscriptionId());
+
+        // planId is null when the subscription comes from the empty fallback: skip the plan call
+        PlanDto p = s.planId() != null ? resilientRequests.getPlanFb(s.planId()) : null;
 
         return new InvoiceDetailResponse(
                 InvoiceResponse.from(invoice),
                 new InvoiceDetailResponse.ClientInfo(c.id(), c.nom(), c.email(), c.numeroTVA(), c.modePaiement()),
-                new InvoiceDetailResponse.AbonnementInfo(s.id(), s.statut(), p.id(), p.nom()));
+                new InvoiceDetailResponse.AbonnementInfo(s.id(), s.statut(),
+                        p != null ? p.id() : null,
+                        p != null ? p.nom() : null));
+    }
+
+    /** Degraded mode when the rate limit is reached: local data only, no remote call. */
+    public InvoiceDetailResponse consultationLimitee(Long id, RequestNotPermitted cause) {
+        return new InvoiceDetailResponse(InvoiceResponse.from(getOrThrow(id)), null, null);
     }
 
     public InvoiceResponse create(InvoiceRequest r) {
@@ -71,8 +86,8 @@ public class InvoiceService {
                     + r.subscriptionId() + " et la période " + r.periode());
         }
 
-        // 2. Subscription must exist (404 via Feign) and be ACTIVE
-        SubscriptionDto sub = abonnementsClient.getSubscription(r.subscriptionId());
+        // 2. Subscription must exist (404) and be ACTIVE; strict mode: 503 if service-abonnements is down
+        SubscriptionDto sub = resilientRequests.getSubscriptionStrict(r.subscriptionId());
         if (!"ACTIVE".equals(sub.statut())) {
             throw new InvalidStateException("Abonnement non actif : " + sub.statut());
         }
@@ -80,8 +95,8 @@ public class InvoiceService {
             throw new InvalidStateException("Le client ne correspond pas à l'abonnement");
         }
 
-        // 3. Client must exist (404 via Feign) and be ACTIF
-        ClientDto client = clientsClient.getClient(r.clientId());
+        // 3. Client must exist (404) and be ACTIF; strict mode: 503 if service-clients is down
+        ClientDto client = resilientRequests.getClientStrict(r.clientId());
         if (!"ACTIF".equals(client.statut())) {
             throw new InvalidStateException("Client suspendu");
         }
@@ -128,8 +143,8 @@ public class InvoiceService {
 
     public InvoiceResponse emettre(Long id) {
         Invoice invoice = getOrThrow(id);
-        // Client must still be ACTIF before issuing the invoice
-        ClientDto client = clientsClient.getClient(invoice.getClientId());
+        // Client must still be ACTIF before issuing; strict mode (503 if service-clients is down)
+        ClientDto client = resilientRequests.getClientStrict(invoice.getClientId());
         if (!"ACTIF".equals(client.statut())) {
             throw new InvalidStateException("Client suspendu : émission impossible");
         }
