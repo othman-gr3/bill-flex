@@ -1,10 +1,10 @@
-# Bill-Flex: team documentation (Jalons 0 to 3)
+# Bill-Flex: team documentation (Jalons 0 to 5)
 
 How we built the Bill-Flex microservices project, step by step, and **why** each step was done that way, so that anyone in the team (or any AI assistant) can repeat the same method for the next jalons.
 
 - **Authors:** Othmane Lamdala, Hiba Zakari, Walid Louane
 - **Course:** J2EE avancée, 5th year IDSI (Dr. Salim Khalil)
-- **Repository:** https://github.com/othman-gr3/bill-flex (branch `main`, tags `v1.0`, `v2.0`, `v3.0`)
+- **Repository:** https://github.com/othman-gr3/bill-flex (branch `main`, tags `v1.0` to `v5.0`)
 - **Stack:** Java 17 (target), Spring Boot 3.5.6, Spring Cloud 2025.0.0, Maven multi-module, H2, IntelliJ IDEA
 
 > Put this file in the repo as `docs/DOCUMENTATION-BILLFLEX.md` and commit it, so it travels with the code.
@@ -21,23 +21,24 @@ How we built the Bill-Flex microservices project, step by step, and **why** each
 6. [Jalon 1: the three business services (v1.0)](#6-jalon-1-the-three-business-services-v10)
 7. [Jalon 2: Eureka and Gateway (v2.0)](#7-jalon-2-eureka-and-gateway-v20)
 8. [Jalon 3: Config Server (v3.0)](#8-jalon-3-config-server-v30)
-9. [Jalon 5: RabbitMQ et notifications](#9-jalon-5-rabbitmq-et-notifications)
-10. [Git, GitHub and GitHub Actions](#10-git-github-and-github-actions)
-11. [The method: how to do the next jalon](#11-the-method-how-to-do-the-next-jalon)
-12. [Likely next jalons and how to approach them](#12-likely-next-jalons-and-how-to-approach-them)
-13. [Problems we hit and how we fixed them](#13-problems-we-hit-and-how-we-fixed-them)
-14. [Glossary](#14-glossary)
-15. [Prompt for your AI assistant](#15-prompt-for-your-ai-assistant)
+9. [Jalon 4: OpenFeign (v4.0)](#9-jalon-4-openfeign-v40)
+10. [Jalon 5: RabbitMQ and notifications (v5.0)](#10-jalon-5-rabbitmq-and-notifications-v50)
+11. [Git, GitHub and GitHub Actions](#11-git-github-and-github-actions)
+12. [The method: how to do the next jalon](#12-the-method-how-to-do-the-next-jalon)
+13. [Likely next jalons and how to approach them](#13-likely-next-jalons-and-how-to-approach-them)
+14. [Problems we hit and how we fixed them](#14-problems-we-hit-and-how-we-fixed-them)
+15. [Glossary](#15-glossary)
+16. [Prompt for your AI assistant](#16-prompt-for-your-ai-assistant)
 
 ---
 
 ## 1. How to use this document
 
 - **Sections 2 to 4** are the big picture and the rules. Read them first.
-- **Sections 5 to 8** are the history: for each jalon, what the professor asked, what we built, the exact steps, and the reasoning. Use them as a recipe.
-- **Section 10** is the generic method to repeat for any new jalon.
-- **Section 12** lists the real problems we hit. Read it before you start coding, it saves hours.
-- **Section 14** is a ready-to-paste prompt that gives an AI assistant all the context of this project. Paste it at the start of every AI session.
+- **Sections 5 to 10** are the history: for each jalon, what the professor asked, what we built, the exact steps, and the reasoning. Use them as a recipe.
+- **Section 12** is the generic method to repeat for any new jalon.
+- **Section 14** lists the real problems we hit. Read it before you start coding, it saves hours.
+- **Section 16** is a ready-to-paste prompt that gives an AI assistant all the context of this project. Paste it at the start of every AI session.
 
 The professor's rule to keep in mind: *the TP is practice (not handed in), the jalon is the graded step of our own project (PFM), delivered on Git with a tag.*
 
@@ -72,6 +73,8 @@ We compared three project sheets (Bill-Flex, Stock-Alert, Quick-Ship). All three
 | API Gateway | `gateway-service` | `gateway-service` | 8080 | v2.0 |
 | Config Server | `config-server` | `config-server` | 8888 | v3.0 |
 | Notifications email | `notification-service` | `notification-service` | 8084 | v5.0 |
+| RabbitMQ | Docker container | n/a | 5672 / 15672 UI | v5.0 |
+| Mailpit | Docker container | n/a | 1025 SMTP / 8025 UI | v5.0 |
 
 ### 2.4 Domain model
 
@@ -96,31 +99,33 @@ We compared three project sheets (Bill-Flex, Stock-Alert, Quick-Ship). All three
 | `StatutClient` | ACTIF, SUSPENDU |
 | `ModePaiement` | CARTE, VIREMENT, PRELEVEMENT |
 
-### 2.5 Final repository structure (v3.0)
+### 2.5 Final repository structure (v5.0)
 
 ```
 bill-flex/
-├── pom.xml                      (parent, packaging pom, 6 modules)
+├── pom.xml                      (parent, packaging pom, 7 modules)
 ├── README.md                    (description, UML, architecture, start order)
 ├── .gitignore
 ├── docs/
 │   ├── DOCUMENTATION-BILLFLEX.md   (this file)
-│   ├── postman/                    (BillFlex-v1.0 / v2.0 / v3.0 collections)
-│   └── screenshots/
+│   ├── postman/                    (BillFlex-v1.0 to v5.0 collections)
+│   └── screenshots/                (V5 capture checklist)
 ├── config-repo/                 (central configuration, read by config-server)
 │   ├── application.properties
 │   ├── service-abonnements.properties
 │   ├── service-facturation.properties
 │   ├── service-clients.properties
 │   ├── gateway-service.properties
-│   └── gateway-service-statique.properties
+│   ├── gateway-service-statique.properties
+│   └── notification-service.properties
 ├── eureka-server/               (8761)
 ├── config-server/               (8888)
 ├── gateway-service/             (8080)
 ├── service-abonnements/         (8081)
 ├── service-facturation/         (8082)
-└── service-clients/             (8083)
-└── notification-service/        (8084, interne)
+├── service-clients/              (8083)
+├── notification-service/         (8084, interne)
+├── docker-compose.yml            (Mailpit and RabbitMQ)
 ```
 
 Each business service has this internal layout:
@@ -147,6 +152,8 @@ src/test/resources/application.properties        (from Jalon 3)
 | 1 | `v1.0` | Business services with Controller/Service/Repository, validated DTOs, REST API, HTTP codes, error handling, Postman or Swagger tests | 3 services, tests, Postman v1.0 |
 | 2 | `v2.0` | Eureka server, Gateway with dynamic routing, updated architecture schema | `eureka-server`, `gateway-service`, Postman v2.0 |
 | 3 | `v3.0` | `config-repo` (global file plus one per service), Config Server, services and Gateway consuming central config | `config-repo`, `config-server`, 2-line local config, Postman v3.0 |
+| 4 | `v4.0` | OpenFeign communication | OpenFeign clients in `service-facturation` |
+| 5 | `v5.0` | Asynchronous RabbitMQ communication and notifications | `notification-service`, durable queue, Mailpit, Docker, Postman v5.0 |
 
 ---
 
@@ -868,67 +875,202 @@ Commit `V3 - Config Server et config-repo`, push, tag `v3.0`, verify the tag.
 
 ---
 
-## 9. Jalon 5: RabbitMQ et notifications
+## 9. Jalon 4: OpenFeign (v4.0)
 
-### 9.1 What was asked
+OpenFeign communication was merged by the teammate who implemented it; details to be completed by them. What is visible in the current code is that `service-facturation` contains Feign clients for `service-abonnements` and `service-clients`, and uses their DTOs during invoice operations.
 
-Send an email after the validation of an invoice operation, using RabbitMQ for asynchronous JSON communication and Mailpit for local SMTP testing. The message must be published after the invoice transaction commits, and the consumer must process messages left in the queue after a restart.
+## 10. Jalon 5: RabbitMQ and notifications (v5.0)
 
-### 9.2 The idea
+### 10.1 What the professor asked
 
-`service-facturation` remains the business producer: it validates the client through the existing OpenFeign client, changes `BROUILLON` to `EMISE`, saves the invoice, then registers an `afterCommit` synchronization. The synchronization publishes a local copy of `NotificationEmailDto` to the durable `notifications.email` queue. `notification-service` is an internal consumer on port 8084; it does not use Eureka and has no Gateway route. It validates the message and sends it through Mailpit with `JavaMailSender`.
+The objectives were to:
 
-### 9.3 Steps
+- create a notification service and test email sending with Mailpit;
+- install RabbitMQ and establish JSON exchanges between the business producer and notification consumer;
+- publish only after the business transaction commits, without waiting for email delivery;
+- verify the complete flow, error handling, and deferred processing after a consumer restart.
 
-1. Start the two local infrastructure containers:
-   `docker compose up -d`.
-2. Push `config-repo/application.properties` and `config-repo/notification-service.properties` to `main` before starting Config Server. RabbitMQ uses the local demo credentials `tp/tp123`; Mailpit uses SMTP `1025`.
-3. Start Eureka, Config Server, the three business services, `notification-service`, and finally the Gateway.
-4. Call `PATCH /service-facturation/invoices/{id}/emettre` through the Gateway. The HTTP response is returned after the database transaction; email delivery is handled independently.
-5. Stop the notification service, emit two invoices, and verify `Ready = 2` for `notifications.email` at RabbitMQ's management UI. Restart the consumer and verify that both messages are delivered and the counters return to zero.
+The four deliverables were the updated project, an architecture diagram, an updated README with Docker/configuration/start/test instructions, and Postman tests for success and failure cases.
 
-### 9.4 Why publish after commit
+### 10.2 The idea
 
-Publishing before commit could leave an email in the queue for an invoice whose transaction later rolls back. `afterCommit` makes the event represent only a successfully persisted `EMISE` invoice. A broker failure is logged and does not change the already successful business response.
+The business event is invoice emission: `PATCH /invoices/{id}/emettre` changes `BROUILLON` to `EMISE`. `service-facturation` obtains the client's name and email through the existing OpenFeign client, saves the invoice, and registers a `TransactionSynchronization.afterCommit` callback. The callback calls `NotificationPublisher`, which sends a JSON `NotificationEmailDto` to the durable `notifications.email` queue.
 
-### 9.5 Changes in existing files
+`notification-service` consumes the message with `@RabbitListener`, validates the record explicitly with Jakarta `Validator`, and calls `NotificationService`. That service creates a `SimpleMailMessage` from `noreply@billflex.com` and sends it with `JavaMailSender` to Mailpit.
 
-| File | Change |
-|---|---|
-| root `pom.xml` | + `notification-service` module |
-| `service-facturation/pom.xml` | + AMQP starter |
-| `service-facturation` | durable queue, JSON converter, publisher, after-commit publication and tests |
-| `config-repo/application.properties` | shared local RabbitMQ connection |
-| `config-repo/notification-service.properties` | port, Mailpit and listener retry settings |
-| `README.md` | architecture, ports, Docker commands and test procedure |
-| `docs/postman/BillFlex-v5.0.postman_collection.json` | success, validation, 404/409 and deferred-processing cases |
-| `docs/DOCUMENTATION-BILLFLEX.md` | this section and new traps/glossary terms |
-| `docker-compose.yml` | Mailpit and RabbitMQ containers |
+This is asynchronous: the HTTP response is returned after the invoice transaction while RabbitMQ delivery and SMTP sending happen separately.
 
-### 9.6 Jalon 4 note
+### 10.3 Real code
 
-OpenFeign communication, already merged; details to be completed by the teammate who did it.
+The producer declares the queue and converter in `service-facturation/src/main/java/com/billflex/facturation/config/RabbitConfig.java`:
 
-### 9.7 Problems and traps
+```java
+public static final String QUEUE_EMAIL = "notifications.email";
 
-- The queue must be declared by the producer as well as the consumer, so it exists while the consumer is stopped.
-- Use `Jackson2JsonMessageConverter` with the Spring Boot 3.5.6 dependency set; do not copy the Spring AMQP 4.x `JacksonJsonMessageConverter` name.
-- `max-attempts` is the Spring Boot 3.x listener retry property; `max-retries` is not used here.
-- Do not add Eureka or Gateway discovery to `notification-service`; its direct controller is only a manual email check.
-- Do not publish from the controller or before `repository.save` commits.
+@Bean
+public Queue emailQueue() {
+    return new Queue(QUEUE_EMAIL, true);
+}
 
-### 9.8 Jalon 5 checklist
+@Bean
+public Jackson2JsonMessageConverter messageConverter() {
+    return new Jackson2JsonMessageConverter();
+}
+```
 
-- [ ] Mailpit and RabbitMQ start with Docker Compose or the documented `docker run` commands.
-- [ ] `notification-service` sends a valid email with 204 and reports validation/SMTP errors as 400/503.
-- [ ] The invoice emission publishes one JSON message only after commit.
-- [ ] Broker failure does not turn a successful invoice emission into an HTTP error.
+`service-facturation/src/main/java/com/billflex/facturation/messaging/NotificationPublisher.java` sends to the queue:
+
+```java
+public void publier(NotificationEmailDto notification) {
+    rabbitTemplate.convertAndSend(RabbitConfig.QUEUE_EMAIL, notification);
+}
+```
+
+The relevant emission flow in `InvoiceService.emettre` saves the invoice, builds the local DTO, and calls the after-commit helper:
+
+```java
+Invoice saved = repository.save(invoice);
+NotificationEmailDto notification = new NotificationEmailDto(
+        client.email(),
+        "Facture n° " + saved.getId() + " émise",
+        """
+                Bonjour %s,
+
+                Votre facture n° %d a été émise.
+                Période : %s
+                Montant TTC : %s
+                Échéance : %s
+                """.formatted(client.nom(), saved.getId(), saved.getPeriode(),
+                saved.getMontantTTC(), saved.getEcheance()));
+publierApresCommit(notification);
+```
+
+`publierApresCommit` registers `afterCommit`; publication failures are caught as `AmqpException` and logged. If synchronization is not active, it publishes directly in the same guarded path.
+
+The consumer in `notification-service/src/main/java/com/billflex/notification/messaging/NotificationConsumer.java` validates before sending:
+
+```java
+@RabbitListener(queues = RabbitConfig.QUEUE_EMAIL)
+public void recevoir(NotificationEmailDto dto) {
+    Set<ConstraintViolation<NotificationEmailDto>> violations = validator.validate(dto);
+    if (!violations.isEmpty()) {
+        throw new ConstraintViolationException(violations);
+    }
+    notificationService.envoyerEmail(dto);
+}
+```
+
+The actual central configuration is:
+
+```properties
+# config-repo/application.properties
+spring.rabbitmq.host=localhost
+spring.rabbitmq.port=5672
+spring.rabbitmq.username=tp
+spring.rabbitmq.password=tp123
+```
+
+```properties
+# config-repo/notification-service.properties
+server.port=8084
+spring.mail.host=localhost
+spring.mail.port=1025
+spring.rabbitmq.listener.simple.retry.enabled=true
+spring.rabbitmq.listener.simple.retry.max-attempts=3
+spring.rabbitmq.listener.simple.retry.initial-interval=2000ms
+spring.rabbitmq.listener.simple.default-requeue-rejected=false
+```
+
+With Spring Boot 3.5.6 and Spring AMQP 3.x, the project uses `Jackson2JsonMessageConverter` and `spring.rabbitmq.listener.simple.retry.max-attempts`. The professor's Boot 4 TP uses the different `JacksonJsonMessageConverter`, `max-retries`, and `spring-boot-starter-webmvc` names; those names must not be copied into this project.
+
+### 10.4 Why these choices
+
+- **After commit:** publishing before commit could leave an email for an invoice whose transaction rolls back. The callback represents only a successfully committed `EMISE` invoice.
+- **Queue on both services:** the producer declares the durable queue so it exists even when the consumer is stopped; the consumer declares the same queue so it can start independently.
+- **Explicit validation:** RabbitMQ messages do not pass through MVC `@Valid` controller binding. The consumer therefore calls `Validator` itself and rejects invalid DTOs.
+- **No Gateway route:** `notification-service` is internal, has no Eureka client dependency, and its only controller is the manual `POST /notifications/email` check.
+- **No DLQ:** the real configuration enables three attempts at two-second intervals and `default-requeue-rejected=false`; no dead-letter exchange is configured.
+
+### 10.5 Steps and verification
+
+1. Start Mailpit and RabbitMQ with the documented Docker commands.
+2. Push `config-repo` to the branch read by Config Server before starting Config Server.
+3. Start Eureka, Config Server, the three business services, `notification-service`, and then the Gateway.
+4. Call `PATCH http://localhost:8080/service-facturation/invoices/{id}/emettre`.
+5. Verify HTTP 200 with `statut: "EMISE"` and inspect the email at `http://localhost:8025`.
+6. Stop `notification-service`, emit two `BROUILLON` invoices, verify `Ready = 2`, restart the consumer, and verify two emails with `Ready = 0` and `Unacked = 0`.
+
+### 10.6 Existing and new files
+
+Modified existing files:
+
+- `pom.xml`
+- `service-facturation/pom.xml`
+- `service-facturation/src/main/java/com/billflex/facturation/service/InvoiceService.java`
+- `service-facturation/src/test/java/com/billflex/facturation/FacturationApiTest.java`
+- `service-facturation/src/test/resources/application.properties`
+- `config-repo/application.properties`
+- `README.md`
+
+Added files:
+
+- `notification-service/pom.xml`
+- `notification-service/src/main/java/com/billflex/notification/NotificationServiceApplication.java`
+- `notification-service/src/main/java/com/billflex/notification/config/RabbitConfig.java`
+- `notification-service/src/main/java/com/billflex/notification/controller/NotificationController.java`
+- `notification-service/src/main/java/com/billflex/notification/dto/ApiError.java`
+- `notification-service/src/main/java/com/billflex/notification/dto/NotificationEmailDto.java`
+- `notification-service/src/main/java/com/billflex/notification/exception/NotificationExceptionHandler.java`
+- `notification-service/src/main/java/com/billflex/notification/messaging/NotificationConsumer.java`
+- `notification-service/src/main/java/com/billflex/notification/service/NotificationService.java`
+- `notification-service/src/main/resources/application.properties`
+- `notification-service/src/test/java/com/billflex/notification/NotificationApiTest.java`
+- `notification-service/src/test/resources/application.properties`
+- `service-facturation/src/main/java/com/billflex/facturation/config/RabbitConfig.java`
+- `service-facturation/src/main/java/com/billflex/facturation/dto/NotificationEmailDto.java`
+- `service-facturation/src/main/java/com/billflex/facturation/messaging/NotificationPublisher.java`
+- `config-repo/notification-service.properties`
+- `docker-compose.yml`
+
+Documentation and test artifacts:
+
+- `docs/postman/BillFlex-v5.0.postman_collection.json`
+- `docs/postman/README.md`
+- `docs/screenshots/README-V5.md`
+- `docs/DOCUMENTATION-BILLFLEX.md`
+
+### 10.7 Jalon 5 checklist
+
+- [ ] Mailpit and RabbitMQ are started locally with the documented ports.
+- [ ] `notification-service` returns 204 for a valid manual email.
+- [ ] Invalid email and empty subject return 400.
+- [ ] SMTP failure returns 503 on the manual endpoint.
+- [ ] Invoice emission returns 200 with `EMISE`.
+- [ ] Publication happens after commit and broker failure does not change the HTTP response.
+- [ ] Unknown invoice returns 404 and invalid transition returns 409 without publication.
 - [ ] Stopped-consumer messages are deferred and delivered after restart.
-- [ ] README, architecture diagram and Postman v5.0 are updated.
+- [ ] README, architecture diagram, Postman collection, and screenshot checklist are present.
 
-## 10. Git, GitHub and GitHub Actions
+### 10.8 Screenshots
 
-### 9.1 What we do on GitHub
+The required filenames and capture procedure are listed in [`docs/screenshots/README-V5.md`](screenshots/README-V5.md).
+
+> [À COMPLÉTER: ajouter les captures après la démonstration manuelle.]
+
+![Mailpit email](screenshots/mailpit-email-recu.png)
+![RabbitMQ Ready = 2](screenshots/rabbitmq-queue-ready-2.png)
+![RabbitMQ after restart](screenshots/rabbitmq-queue-apres-redemarrage.png)
+![Postman emission 200](screenshots/postman-emettre-200.png)
+![Postman emission 404](screenshots/postman-emettre-404.png)
+![Postman emission 409](screenshots/postman-emettre-409.png)
+![Postman notification 400](screenshots/postman-notification-400.png)
+![Postman notification 503](screenshots/postman-notification-503.png)
+![Config Server notification](screenshots/config-server-notification-service.png)
+![V5 architecture](screenshots/architecture-v5.png)
+
+## 11. Git, GitHub and GitHub Actions
+
+### 11.1 What we do on GitHub
 
 1. **Repository** `othman-gr3/bill-flex`, public (the Config Server needs to clone it without credentials), collaborators added in *Settings -> Collaborators*.
 2. **Commits and tags** exactly as in section 3. Tags appear in the *Tags* page (`https://github.com/othman-gr3/bill-flex/tags`). The professor checks the tag, so always verify that it points to the final commit.
@@ -942,7 +1084,7 @@ OpenFeign communication, already merged; details to be completed by the teammate
    .mvn/wrapper/maven-wrapper.jar
    ```
 
-### 9.2 GitHub Actions (continuous integration)
+### 11.2 GitHub Actions (continuous integration)
 
 > **Note for the author before sharing this document:** the Jalon 1 to 3 deliverables were built and tagged with manual Git commands (section 3). No workflow file was produced in those steps. The workflow below is the **recommended** one. If your repository already has a `.github/workflows/*.yml` that you wrote yourself, **replace this section with the content of your file** and explain what it does.
 
@@ -997,25 +1139,25 @@ Limits to know: the workflow builds and tests; it does not start the whole syste
 
 ---
 
-## 11. The method: how to do the next jalon
+## 12. The method: how to do the next jalon
 
 This is the loop we followed three times. Follow it again, in this order.
 
-### 10.1 Before coding
+### 12.1 Before coding
 
 1. **Read the professor's sheet** (objective, deliverables, the example repo tag) and copy the deliverables into a checklist. A jalon is graded on those bullets, nothing else.
 2. **Check the previous tag.** `git rev-list -n 1 vX.0` must equal the commit you consider final, and the previous jalon must still run.
 3. **List the changes before writing code:** *new modules*, *new files*, *modified files* (we always produced this "changes only" list, it avoids forgetting a pom or a property).
 4. **Announce in the team chat that you own this jalon**, and check that nobody else is editing the root `pom.xml`, `config-repo/` or the README meanwhile (see 3.2).
 
-### 10.2 Build, smallest step first
+### 12.2 Build, smallest step first
 
 5. Create the new module or code in this order: pom -> main class -> configuration -> logic -> tests.
 6. **Configuration rule since Jalon 3:** a new application keeps only `spring.application.name` and `spring.config.import=configserver:http://localhost:8888` locally. Its port, database and other settings go into `config-repo/<name>.properties`, and `config-repo` is **pushed to GitHub before** you start the Config Server.
 7. **Test rule:** each service has `src/test/resources/application.properties` so tests never depend on Eureka or the Config Server.
 8. Add to the root `pom.xml` `<modules>` only after the folder exists.
 
-### 10.3 Prove it works
+### 12.3 Prove it works
 
 9. Run `mvn clean verify`: green.
 10. Start the whole system in order (Eureka -> Config Server -> services -> Gateway) and check Eureka.
@@ -1023,13 +1165,13 @@ This is the loop we followed three times. Follow it again, in this order.
 12. Do the **demo the sheet asks for** (dynamic discovery, aggregation, ...). Take screenshots into `docs/screenshots/`.
 13. **Regression:** the URLs of the previous jalons still answer.
 
-### 10.4 Deliver
+### 12.4 Deliver
 
 14. Update the README (architecture diagram, ports table, start order, URLs).
 15. Commit with the standard message, push, create the tag, **verify the tag** (3.3), and check the *Tags* page on GitHub.
 16. Update this documentation with a new section for the jalon (what, how, why, problems).
 
-### 10.5 Design principles we keep
+### 12.5 Design principles we keep
 
 - **One service, one database, one responsibility.** No JPA relation across services.
 - **Request and response DTOs**, never entities in controllers.
@@ -1041,11 +1183,11 @@ This is the loop we followed three times. Follow it again, in this order.
 
 ---
 
-## 12. Likely next jalons and how to approach them
+## 13. Likely next jalons and how to approach them
 
 > These are our **expectation**, based on the Bill-Flex project sheet (synchronous calls, asynchronous events, bonus). Always follow the professor's actual jalon sheet; if it differs, the sheet wins.
 
-### 11.1 Synchronous calls with OpenFeign
+### 13.1 Synchronous calls with OpenFeign
 
 From the sheet: `service-facturation` calls `service-abonnements` (is the subscription ACTIVE, which plan) before computing an invoice, and `service-clients` (VAT number, payment mode) before moving an invoice to `EMISE`.
 
@@ -1065,7 +1207,7 @@ How we would do it:
 5. Tests: mock the Feign client with `@MockitoBean` (or WireMock) so unit tests need no other service.
 6. Postman: a scenario that creates an invoice for an `ACTIVE` subscription (ok) and for a missing/terminated one (error).
 
-### 11.2 Asynchronous events with Kafka
+### 13.2 Asynchronous events with Kafka
 
 From the sheet: `subscription-renewed` (abonnements -> facturation creates a `BROUILLON` invoice), `invoice-issued` (facturation -> clients notifies and creates a pending `Payment`), `payment-received` (clients -> facturation sets the invoice `PAYEE`).
 
@@ -1078,18 +1220,18 @@ How we would do it:
 5. Consider the **Outbox pattern** so the database update and the event cannot diverge.
 6. Tests with Embedded Kafka or Testcontainers; keep ordinary unit tests free of a running broker.
 
-### 11.3 Bonus items
+### 13.3 Bonus items
 
 - Monthly batch job: automatic reminders for `EN_RETARD` invoices (Spring Scheduler or Spring Batch).
 - Angular dashboard of monthly recurring revenue (MRR), served through the Gateway (remember CORS).
 
-### 11.4 Per-jalon rule of thumb
+### 13.4 Per-jalon rule of thumb
 
 Same loop as section 10: write the changes-only list, implement, test, Postman, demo, README, commit, tag, verify.
 
 ---
 
-## 13. Problems we hit and how we fixed them
+## 14. Problems we hit and how we fixed them
 
 | # | Symptom | Cause | Fix |
 |---|---|---|---|
@@ -1117,6 +1259,13 @@ Same loop as section 10: write the changes-only list, implement, test, Postman, 
 | 22 | Email is sent before the invoice is durable | publication was performed inside the transaction | register `TransactionSynchronization.afterCommit`; log an `AmqpException` without changing the 200 response |
 | 23 | Deferred messages are lost or rejected | queue was transient or consumer requeued failures forever | declare `notifications.email` durable and configure `default-requeue-rejected=false` with bounded retry |
 | 24 | Notification service appears in Gateway or Eureka | an unnecessary Eureka client or Gateway route was added | keep the module without the Eureka dependency; use only the direct manual controller |
+| 25 | `ConfigClientFailFastException` with `Connection refused` on `localhost:8888` | Config Server was not started before the notification service | start Eureka, Config Server, then the services; verify `/notification-service/default` first |
+| 26 | notification-service starts on port 8080 and no `JavaMailSender` bean exists | `config-repo/notification-service.properties` was not served, was not pushed to the branch read by Config Server, or had the wrong name | push the file to `main` (or temporarily set `default-label` to the working branch), restart Config Server, and verify that `propertySources` lists the file |
+| 27 | `Failed to check/redeclare auto-delete queue(s)` in the listener log | RabbitMQ is unreachable because the container is stopped or the served host/credentials are wrong | run `docker start rabbitmq`, check the RabbitMQ properties served by Config Server, and let the listener reconnect |
+| 28 | Professor TP names do not resolve in this project | Boot 3.x/Spring AMQP 3.x uses different names from the Boot 4 TP | use `Jackson2JsonMessageConverter`, `retry.max-attempts`, and the project's web starter; do not copy the TP's converter, retry, or webmvc names |
+| 29 | Notification is published for a transaction that later rolls back | publication was placed after `save()` but before commit | keep publication in `TransactionSynchronization.afterCommit`, not immediately after `repository.save()` |
+| 30 | Internal notification endpoint is reachable through the Gateway | notification-service was registered or routed as a public service | keep it without Eureka and do not add a Gateway route |
+| 31 | Unit tests require RabbitMQ | tests started the listener or depended on a live broker | keep broker auto-start disabled in test resources and mock the mail sender/publisher |
 
 **Harmless messages (do not waste time on them):**
 - `Mockito is currently self-attaching ...` and `Sharing is only supported for boot loader classes ...` on recent JDKs.
@@ -1128,7 +1277,7 @@ Same loop as section 10: write the changes-only list, implement, test, Postman, 
 
 ---
 
-## 14. Glossary
+## 15. Glossary
 
 | Term | Meaning |
 |---|---|
@@ -1154,8 +1303,16 @@ Same loop as section 10: write the changes-only list, implement, test, Postman, 
 | **OpenFeign** | declarative HTTP client between services (next jalon, probably) |
 | **Kafka / event** | asynchronous messaging between services (next jalon, probably) |
 | **RabbitMQ** | AMQP broker that stores and delivers the notification JSON message |
+| **Broker** | messaging server that accepts, stores, and delivers messages |
+| **Producer** | component that publishes a message; here `service-facturation` |
+| **AMQP** | protocol used by the producer and consumer to communicate with RabbitMQ |
 | **Queue** | durable ordered buffer; here `notifications.email` holds emails while the consumer is stopped |
+| **Durable queue** | queue whose declaration survives broker restart |
+| **Ack** | acknowledgement that a consumer has successfully handled a message |
+| **Retry** | another delivery attempt after a consumer failure |
+| **DLQ** | dead-letter queue; none is configured in this jalon |
 | **Mailpit** | local SMTP server and web inbox used to inspect test emails |
+| **SMTP** | protocol used to transfer the email from notification-service to Mailpit |
 | **After commit** | transaction callback executed only after the invoice database transaction succeeds |
 | **Consumer** | notification component that reads a queue and sends the email |
 | **Idempotent** | processing the same message twice has the same effect as once |
@@ -1164,7 +1321,7 @@ Same loop as section 10: write the changes-only list, implement, test, Postman, 
 
 ---
 
-## 15. Prompt for your AI assistant
+## 16. Prompt for your AI assistant
 
 Paste the block below **at the start of every AI session** (ChatGPT, Claude, Copilot, ...) before asking for anything. It gives the assistant the whole context, the conventions, the traps and the working rules. Then add your request using one of the templates at the end.
 
@@ -1191,7 +1348,7 @@ Rule: one invoice = 1 subscription + 1 client + 1 period + 1 total amount TTC.
 - Configuration in .properties files (not yaml). Lombok allowed. DTOs are Java records.
 - H2 in-memory database per business service. springdoc-openapi-starter-webmvc-ui 2.8.9.
 
-## 3. Applications (current state: Jalons 1, 2 and 3 are DONE and tagged v1.0, v2.0, v3.0)
+## 3. Applications (current state: Jalons 1 to 5 are DONE and tagged v1.0 to v5.0)
 | Module | spring.application.name | Port | Role |
 | service-abonnements | service-abonnements | 8081 | Plan, Subscription |
 | service-facturation | service-facturation | 8082 | Invoice, InvoiceLine (main service) |
@@ -1199,8 +1356,11 @@ Rule: one invoice = 1 subscription + 1 client + 1 period + 1 total amount TTC.
 | eureka-server       | eureka-server       | 8761 | service registry |
 | gateway-service     | gateway-service     | 8080 | reactive Spring Cloud Gateway (WebFlux), dynamic routing /<service-name>/** |
 | config-server       | config-server       | 8888 | Spring Cloud Config Server reading folder config-repo of the GitHub repo, branch main |
-Base packages: com.billflex.abonnements, .facturation, .clients, .eurekaserver, .gateway, .configserver.
-Start order: Eureka (8761) -> Config Server (8888) -> services -> Gateway (8080).
+| notification-service | notification-service | 8084 | internal email consumer; no Eureka registration and no Gateway route |
+| RabbitMQ            | Docker container      | 5672 / 15672 UI | local AMQP broker and management UI |
+| Mailpit             | Docker container      | 1025 SMTP / 8025 UI | local SMTP server and inbox |
+Base packages: com.billflex.abonnements, .facturation, .clients, .eurekaserver, .gateway, .configserver, .notification.
+Start order: Docker containers -> Eureka (8761) -> Config Server (8888) -> services -> notification-service -> Gateway (8080).
 
 ## 4. Domain model
 - Plan(id, nom, prixMensuel, quotaUtilisateurs, actif)
@@ -1288,7 +1448,7 @@ reached as /service-clients/clients, /service-abonnements/plans, /service-factur
 Reply "Context loaded" and wait for my jalon sheet.
 ````
 
-### 14.1 Request templates (paste after the context prompt)
+### 16.1 Request templates (paste after the context prompt)
 
 **Start a new jalon**
 ```text
