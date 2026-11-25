@@ -73,12 +73,15 @@ public class ResilientRequests {
     // ========== Strict fallbacks ==========
 
     private ClientDto clientIndisponible(Long id, RuntimeException ex) {
+        log.warn("Fallback service-clients.getClientStrict activé : cause={}", ex.getClass().getSimpleName());
         if (!estIndisponible(ex)) { throw ex; }
         throw new ServiceExterneIndisponibleException(
                 "Service-clients est momentanément indisponible. Réessayez dans quelques instants.");
     }
 
     private SubscriptionDto abonnementIndisponible(Long id, RuntimeException ex) {
+        log.warn("Fallback service-abonnements.getSubscriptionStrict activé : cause={}",
+                ex.getClass().getSimpleName());
         if (!estIndisponible(ex)) { throw ex; }
         throw new ServiceExterneIndisponibleException(
                 "Service-abonnements est momentanément indisponible. Réessayez dans quelques instants.");
@@ -87,23 +90,24 @@ public class ResilientRequests {
     // ========== Tolerant fallbacks ==========
 
     private ClientDto clientDeRepli(Long id, RuntimeException ex) {
+        log.warn("Fallback service-clients.getClientFb activé : cause={}", ex.getClass().getSimpleName());
         if (!estIndisponible(ex)) { throw ex; }
         ClientDto enCache = lireCache("clients", id, ClientDto.class);
-        log.info("Client {} loaded from cache or null", id);
         return enCache != null ? enCache : new ClientDto(id, null, null, null, null, null);
     }
 
     private SubscriptionDto abonnementDeRepli(Long id, RuntimeException ex) {
+        log.warn("Fallback service-abonnements.getSubscriptionFb activé : cause={}",
+                ex.getClass().getSimpleName());
         if (!estIndisponible(ex)) { throw ex; }
         SubscriptionDto enCache = lireCache("abonnements", id, SubscriptionDto.class);
-        log.info("Subscription {} loaded from cache or null", id);
         return enCache != null ? enCache : new SubscriptionDto(id, null, null, null);
     }
 
     private PlanDto planDeRepli(Long id, RuntimeException ex) {
+        log.warn("Fallback service-abonnements.getPlanFb activé : cause={}", ex.getClass().getSimpleName());
         if (!estIndisponible(ex)) { throw ex; }
         PlanDto enCache = lireCache("plans", id, PlanDto.class);
-        log.info("Plan {} loaded from cache or null", id);
         return enCache != null ? enCache : new PlanDto(id, null, null);
     }
 

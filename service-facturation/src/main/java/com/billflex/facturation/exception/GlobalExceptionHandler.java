@@ -1,21 +1,30 @@
 package com.billflex.facturation.exception;
 
 import com.billflex.facturation.dto.ApiError;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MissingRequestHeaderException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import feign.FeignException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiError> notFound(ResourceNotFoundException ex) {
@@ -41,6 +50,16 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "Erreur de validation", details);
     }
 
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiError> constraintViolation(ConstraintViolationException ex) {
+        return build(HttpStatus.BAD_REQUEST, "Erreur de validation", null);
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ApiError> missingHeader(MissingRequestHeaderException ex) {
+        return build(HttpStatus.BAD_REQUEST, "En-tête obligatoire manquant : " + ex.getHeaderName(), null);
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiError> unreadable(HttpMessageNotReadableException ex) {
         return build(HttpStatus.BAD_REQUEST,
@@ -64,12 +83,28 @@ public class GlobalExceptionHandler {
         if (ex.status() == 503) {
             return build(HttpStatus.SERVICE_UNAVAILABLE, "Service ou instance indisponible", null);
         }
+        if (ex.status() == 409) {
+            return build(HttpStatus.CONFLICT, "Conflit signalé par un service distant", null);
+        }
         return build(HttpStatus.BAD_GATEWAY, "Erreur HTTP du service distant : " + ex.status(), null);
     }
+
     @ExceptionHandler(ServiceExterneIndisponibleException.class)
     public ResponseEntity<ApiError> serviceExterneIndisponible(ServiceExterneIndisponibleException ex) {
         return build(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), null);
     }
+
+    @ExceptionHandler({BulkheadFullException.class, CallNotPermittedException.class})
+    public ResponseEntity<ApiError> resilienceUnavailable(RuntimeException ex) {
+        return build(HttpStatus.SERVICE_UNAVAILABLE, "Service distant momentanément indisponible", null);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiError> unexpected(Exception ex) {
+        log.error("Erreur interne non gérée dans service-facturation", ex);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "Une erreur interne est survenue", null);
+    }
+
     private ResponseEntity<ApiError> build(HttpStatus status, String message, Map<String, String> details) {
         return ResponseEntity.status(status)
                 .body(new ApiError(Instant.now(), status.value(), status.getReasonPhrase(), message, details));

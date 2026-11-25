@@ -6,7 +6,10 @@ import com.billflex.facturation.feignclient.ClientsClient;
 import com.billflex.facturation.feignclient.PlanDto;
 import com.billflex.facturation.feignclient.SubscriptionDto;
 import com.billflex.facturation.messaging.NotificationPublisher;
+import com.billflex.facturation.repository.IdempotencyRecordRepository;
+import com.billflex.facturation.repository.InvoiceRepository;
 import feign.FeignException;
+import feign.RetryableException;
 import feign.Request;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +28,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -39,6 +44,12 @@ class FacturationApiTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private InvoiceRepository invoiceRepository;
+
+    @Autowired
+    private IdempotencyRecordRepository idempotencyRecordRepository;
 
     // Remote services are mocked: tests need neither Eureka nor other services
     @MockitoBean
@@ -94,7 +105,8 @@ class FacturationApiTest {
                 {"subscriptionId":10,"clientId":1,"periode":"2030-01","echeance":"2030-02-05",
                  "lignes":[{"libelle":"Abonnement Pro","quantite":2,"prixUnitaire":50.00}]}
                 """;
-        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-valid-2030-01")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("Location"))
                 .andExpect(jsonPath("$.statut").value("BROUILLON"))
@@ -107,7 +119,8 @@ class FacturationApiTest {
         String body = """
                 {"subscriptionId":null,"clientId":1,"periode":"2026-13","echeance":"2030-02-05","lignes":[]}
                 """;
-        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-invalid")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.details.subscriptionId").exists())
                 .andExpect(jsonPath("$.details.periode").exists())
@@ -120,7 +133,8 @@ class FacturationApiTest {
                 {"subscriptionId":1,"clientId":1,"periode":"2026-09","echeance":"2030-02-05",
                  "lignes":[{"libelle":"Doublon","quantite":1,"prixUnitaire":10.00}]}
                 """;
-        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-duplicate")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isConflict());
     }
 
@@ -129,7 +143,8 @@ class FacturationApiTest {
         when(abonnementsClient.getSubscription(anyLong()))
                 .thenReturn(new SubscriptionDto(1L, 1L, 2L, "SUSPENDUE"));
 
-        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body("2031-01")))
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-suspended-subscription")
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-01")))
                 .andExpect(status().isConflict());
     }
 
@@ -138,7 +153,8 @@ class FacturationApiTest {
         when(clientsClient.getClient(anyLong()))
                 .thenReturn(new ClientDto(1L, "Test", "t@t.com", "MA12345678", "VIREMENT", "SUSPENDU"));
 
-        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body("2031-02")))
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-suspended-client")
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-02")))
                 .andExpect(status().isConflict());
     }
 
@@ -149,8 +165,112 @@ class FacturationApiTest {
         when(abonnementsClient.getSubscription(anyLong()))
                 .thenThrow(new FeignException.NotFound("not found", req, null, null));
 
-        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body("2031-03")))
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-missing-subscription")
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-03")))
                 .andExpect(status().isNotFound());
+        verify(abonnementsClient, times(1)).getSubscription(1L);
+    }
+
+    @Test
+    void createInvoice_remote503_retriesThenReturns503() throws Exception {
+        Request req = Request.create(Request.HttpMethod.GET, "/subscriptions/1",
+                Map.of(), null, StandardCharsets.UTF_8, null);
+        when(abonnementsClient.getSubscription(anyLong()))
+                .thenThrow(new FeignException.ServiceUnavailable("down", req, null, Map.of()));
+
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-503")
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-09")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503));
+        verify(abonnementsClient, times(3)).getSubscription(1L);
+    }
+
+    @Test
+    void createInvoice_timeout_retriesThenReturns503() throws Exception {
+        RetryableException timeout = mock(RetryableException.class);
+        when(timeout.status()).thenReturn(-1);
+        when(abonnementsClient.getSubscription(anyLong())).thenThrow(timeout);
+
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "invoice-timeout")
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-10")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503));
+        verify(abonnementsClient, times(3)).getSubscription(1L);
+    }
+
+    @Test
+    void createInvoice_sameKeyAndBody_replaysOriginalWithoutDuplicate() throws Exception {
+        String key = "invoice-replay-2031-04";
+        String requestBody = body("2031-04");
+        long before = invoiceRepository.countBySubscriptionIdAndPeriode(1L, "2031-04");
+
+        String firstResponse = mockMvc.perform(post("/invoices").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        long originalId = mapper.readTree(firstResponse).get("id").asLong();
+
+        String replayResponse = mockMvc.perform(post("/invoices").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(requestBody))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.id").value(originalId))
+                .andReturn().getResponse().getContentAsString();
+
+        org.junit.jupiter.api.Assertions.assertEquals(mapper.readTree(firstResponse), mapper.readTree(replayResponse));
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1,
+                invoiceRepository.countBySubscriptionIdAndPeriode(1L, "2031-04"));
+        org.junit.jupiter.api.Assertions.assertTrue(idempotencyRecordRepository.findByIdempotencyKey(key).isPresent());
+    }
+
+    @Test
+    void createInvoice_sameKeyDifferentBody_returns409() throws Exception {
+        String key = "invoice-different-body";
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-05")))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-06")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("requête différente")));
+    }
+
+    @Test
+    void createInvoice_missingIdempotencyKey_returns400() throws Exception {
+        mockMvc.perform(post("/invoices").contentType(MediaType.APPLICATION_JSON).content(body("2031-07")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
+    void createInvoice_blankIdempotencyKey_returns400() throws Exception {
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", "   ")
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-12")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
+    void createInvoice_remoteUnavailable_doesNotStoreKeyAndSameKeyCanRetry() throws Exception {
+        String key = "invoice-remote-retry";
+        Request req = Request.create(Request.HttpMethod.GET, "/subscriptions/1",
+                Map.of(), null, StandardCharsets.UTF_8, null);
+        when(abonnementsClient.getSubscription(anyLong()))
+                .thenThrow(new FeignException.ServiceUnavailable("down", req, null, Map.of()));
+
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-08")))
+                .andExpect(status().isServiceUnavailable());
+        org.junit.jupiter.api.Assertions.assertTrue(idempotencyRecordRepository.findByIdempotencyKey(key).isEmpty());
+
+        when(abonnementsClient.getSubscription(anyLong()))
+                .thenAnswer(i -> new SubscriptionDto(i.getArgument(0), 1L, 2L, "ACTIVE"));
+        mockMvc.perform(post("/invoices").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body("2031-08")))
+                .andExpect(status().isCreated())
+                .andExpect(header().doesNotExist("Idempotent-Replayed"));
     }
 
     @Test

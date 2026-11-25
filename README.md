@@ -19,7 +19,7 @@ Le projet est composé de sept applications Spring Boot et de deux conteneurs d'
 | `service-clients` | Comptes clients (entreprises) et paiements |
 | `notification-service` | Consommation des emails RabbitMQ et envoi SMTP Mailpit (interne, non exposé par la Gateway) |
 
-Les trois services métier sont enregistrés dans **Eureka** et exposés via une **API Gateway**. Toutes les applications sont configurées par le **Config Server** (dossier `config-repo`), sauf Eureka et Config Server eux-mêmes. `notification-service` reste interne : il ne s'enregistre pas dans Eureka et n'est pas routé par la Gateway.
+Les trois services métier et `notification-service` sont enregistrés dans **Eureka**. La Gateway expose les services métier, mais exclut explicitement `notification-service` du routage dynamique. Toutes les applications sont configurées par le **Config Server** (dossier `config-repo`), sauf Eureka et Config Server eux-mêmes.
 
 ## Diagramme de classes
 
@@ -157,6 +157,7 @@ flowchart TB
     SA -. enregistrement .-> EU
     SF -. enregistrement .-> EU
     SC -. enregistrement .-> EU
+    NS -. enregistrement .-> EU
     GW -. découverte .-> EU
 
     SA -. configuration .-> CS
@@ -175,7 +176,7 @@ flowchart TB
 | `service-abonnements` | Plans et abonnements | **8081** |
 | `service-facturation` | Factures et lignes de facturation (service principal) | **8082** |
 | `service-clients` | Clients et paiements | **8083** |
-| `notification-service` | Notifications email, consommateur interne (pas d'Eureka, pas de Gateway) | **8084** |
+| `notification-service` | Notifications email, enregistré dans Eureka mais exclu du routage Gateway | **8084** |
 | `RabbitMQ` | Broker AMQP, queue durable `notifications.email` | **5672**, UI **15672** |
 | `Mailpit` | SMTP local et interface de consultation | **1025**, UI **8025** |
 
@@ -197,11 +198,12 @@ sequenceDiagram
     G->>F: PATCH /invoices/{id}/emettre
     F->>DB: Sauvegarde EMISE
     DB-->>F: Commit
+    F->>R: afterCommit - publication JSON notifications.email
     F-->>G: 200 EMISE
     G-->>C: 200 EMISE
-    F->>R: JSON notifications.email
     R->>N: Livraison du message
     N->>M: Envoi SMTP
+    Note over R,M: Traitement asynchrone; la réponse HTTP n'attend pas l'email
 ```
 
 ## Configuration centralisée
@@ -219,7 +221,7 @@ Le dossier `config-repo/` (versionné sur la branche `main`) contient :
 
 Chaque service et la Gateway ne gardent en local que `spring.application.name` et `spring.config.import=configserver:http://localhost:8888`. `eureka-server` et `config-server` gardent leur configuration locale (problème d'amorçage).
 
-Le fichier `config-repo/notification-service.properties` contient le port 8084, la connexion SMTP Mailpit et les paramètres de retry RabbitMQ. `config-repo/application.properties` contient l'hôte, le port et les identifiants locaux RabbitMQ (`tp` / `tp123`). Le dépôt de configuration doit être poussé sur la branche lue par Config Server avant son démarrage.
+Le fichier `config-repo/notification-service.properties` contient le port 8084, la connexion SMTP Mailpit, les paramètres de retry RabbitMQ et l'enregistrement Eureka. `config-repo/application.properties` contient l'hôte, le port et les identifiants locaux RabbitMQ (`tp` / `tp123`). Après une modification de `config-repo`, pousser le fichier sur la branche lue par Config Server avant de redémarrer Config Server et les services concernés.
 
 Preuve d'agrégation : `GET http://localhost:8888/service-clients/default` renvoie deux `propertySources` : `service-clients.properties` puis `application.properties` (global).
 
@@ -286,11 +288,82 @@ Pour tester le traitement différé :
 | RabbitMQ indisponible après le commit | **200** pour l'émission, erreur AMQP journalisée par `service-facturation` |
 | `notification-service` arrêté | Les messages restent dans la file durable jusqu'au redémarrage |
 
+## Résilience et gestion des erreurs
+
+Les appels Feign de `service-facturation` passent par le bean `ResilientRequests` :
+
+| Appel Feign | Méthode protégée | Résilience |
+|---|---|---|
+| `ClientsClient.getClient` | `ResilientRequests.getClientStrict` / `getClientFb` | Circuit Breaker, Retry, Bulkhead et timeout Feign |
+| `AbonnementsClient.getSubscription` | `ResilientRequests.getSubscriptionStrict` / `getSubscriptionFb` | Circuit Breaker, Retry, Bulkhead et timeout Feign |
+| `AbonnementsClient.getPlan` | `ResilientRequests.getPlanFb` | Circuit Breaker, Retry, Bulkhead et timeout Feign |
+
+Configuration réellement déclarée dans `config-repo/service-facturation.properties` : timeouts Feign connect/read **1000/2000 ms**; Retry **3 tentatives au total**, attente **500 ms**, pour `RetryableException` et HTTP 503; l'ordre est Retry → Circuit Breaker → Bulkhead. Les fenêtres Circuit Breaker sont de **6 appels**, minimum **4**, seuil d'échec **50 %**, retour automatique HALF_OPEN et **3 appels** de sonde. L'ouverture dure **10 s** pour `service-clients` et **5 s** pour `service-abonnements`. Les erreurs Feign 4xx sont ignorées par le calcul d'échec du breaker. Le Bulkhead autorise **10 appels simultanés**, sans attente. Les fallbacks stricts journalisent un WARN avec le nom de l'appel et la classe d'exception, sans contenu de requête ni identifiant sensible.
+
+Les endpoints Actuator activés par configuration sont `health`, `info`, `circuitbreakers`, `circuitbreakerevents`, `retries` et `retryevents` :
+
+- http://localhost:8082/actuator/health
+- http://localhost:8082/actuator/circuitbreakers
+- http://localhost:8082/actuator/circuitbreakerevents
+- http://localhost:8082/actuator/retries
+- http://localhost:8082/actuator/retryevents
+
+Le circuit `service-abonnements` doit apparaître `OPEN` dans `circuitbreakers` après assez d'échecs. Le starter Spring Cloud CircuitBreaker présent dans le `pom.xml` fournit l'intégration Circuit Breaker, mais son POM publié n'apporte pas `resilience4j-retry`, `resilience4j-bulkhead` ni AOP comme dépendances transitives obligatoires; les dépendances manquantes sont donc déclarées explicitement. Vérification locale demandée : `mvn -pl service-facturation dependency:tree | findstr "resilience4j aop aspectj"`.
+
+Les services exposent un `@RestControllerAdvice` avec le même corps `ApiError` (`timestamp`, `status`, `error`, `message`, `details`) :
+
+| HTTP | Causes couvertes |
+|---|---|
+| **400** | Validation, corps JSON illisible, paramètre invalide, clé d'idempotence absente ou vide |
+| **404** | Facture/client/abonnement introuvable, y compris le 404 Feign |
+| **409** | Doublon métier, transition invalide, même clé avec un autre corps, intégrité des données |
+| **500** | Erreur inattendue, message neutre côté client et stack trace dans les logs |
+| **503** | Service distant indisponible, timeout, circuit ouvert ou Bulkhead saturé |
+
+Les autres erreurs HTTP reçues par Feign sont traduites en **502**; un Feign 409 est traduit en 409.
+Le détail de démonstration automatisable est dans [`docs/postman/BillFlex-v6.0.postman_collection.json`](docs/postman/BillFlex-v6.0.postman_collection.json).
+
+## Idempotence des créations
+
+`POST /service-facturation/invoices` et `POST /service-clients/payments` exigent l'en-tête `Idempotency-Key`. Chaque service stocke sa propre clé unique, le SHA-256 du JSON canonique, l'identifiant de ressource et l'instant de création dans la même transaction que la ressource. La réponse initiale est conservée pour restituer le même contenu original lors d'un replay.
+
+- Même clé et même corps : aucune nouvelle ressource; réponse initiale **201**, même identifiant et en-tête `Idempotent-Replayed: true`.
+- Même clé et corps différent : **409** avec un `ApiError` explicatif.
+- Clé absente ou vide : **400**.
+- Échec de validation distante avant sauvegarde (par exemple service-abonnements en panne) : transaction annulée et clé non stockée; la même clé peut être réutilisée après reprise.
+- Aucune expiration applicative n'est configurée; avec H2 en mémoire, les clés disparaissent au redémarrage du service.
+- La création ou son replay ne publie pas d'email; seule l'émission `PATCH /invoices/{id}/emettre` déclenche le flux V5 après commit.
+
+Exemple :
+
+```http
+POST http://localhost:8080/service-facturation/invoices
+Idempotency-Key: demo-facture-2026-unique
+Content-Type: application/json
+
+{"subscriptionId":3,"clientId":3,"periode":"2030-01","echeance":"2030-02-05","lignes":[{"libelle":"Abonnement","quantite":1,"prixUnitaire":29.00}]}
+```
+
+### Démonstration V6
+
+1. **Comportement normal :** dans la collection V6, exécuter A puis B et la vérification de liste. Attendu : deux réponses 201 avec le même identifiant au replay, `Idempotent-Replayed: true`, et une seule facture pour cette période.
+2. **Service distant indisponible :** arrêter `service-abonnements`, exécuter F1 et vérifier le 503 `ApiError`; redémarrer le service, exécuter F2 avec la même clé et le même corps. Attendu : 201, création initiale sans indicateur de replay.
+3. **Replay de création :** rejouer A avec la même clé/le même corps : 201 et même ID; changer le corps sous cette clé : 409. Dans les deux services, le replay ne crée pas de doublon.
+
 ## Captures d'écran
 
-Voir la checklist et les noms de fichiers dans [`docs/screenshots/README-V5.md`](docs/screenshots/README-V5.md).
+Voir les checklists [`docs/screenshots/README-V5.md`](docs/screenshots/README-V5.md) et [`docs/screenshots/README-V6.md`](docs/screenshots/README-V6.md).
 
 > [À COMPLÉTER : ajouter les captures après la démonstration manuelle.]
+
+![Création normale idempotente](docs/screenshots/v6-creation-normale-201.png)
+![Replay avec la même clé](docs/screenshots/v6-replay-meme-cle.png)
+![Liste sans doublon](docs/screenshots/v6-liste-sans-doublon.png)
+![Service distant arrêté, erreur 503](docs/screenshots/v6-service-arrete-503.png)
+![Circuit Breaker dans Actuator](docs/screenshots/v6-circuitbreakers-actuator.png)
+![Clé réutilisée avec un autre corps, erreur 409](docs/screenshots/v6-cle-differente-409.png)
+![Clé manquante, erreur 400](docs/screenshots/v6-cle-manquante-400.png)
+![Configuration de résilience dans Config Server](docs/screenshots/v6-config-server-resilience.png)
 
 ![Email reçu dans Mailpit](docs/screenshots/mailpit-email-recu.png)
 ![File RabbitMQ avec Ready = 2](docs/screenshots/rabbitmq-queue-ready-2.png)

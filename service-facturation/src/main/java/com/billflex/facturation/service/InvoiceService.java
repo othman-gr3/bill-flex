@@ -16,14 +16,19 @@ import com.billflex.facturation.messaging.NotificationPublisher;
 import com.billflex.facturation.model.Invoice;
 import com.billflex.facturation.model.InvoiceLine;
 import com.billflex.facturation.model.StatutInvoice;
+import com.billflex.facturation.model.IdempotencyRecord;
+import com.billflex.facturation.repository.IdempotencyRecordRepository;
 import com.billflex.facturation.repository.InvoiceRepository;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -40,6 +45,9 @@ public class InvoiceService {
     private final InvoiceRepository repository;
     private final ResilientRequests resilientRequests;
     private final NotificationPublisher notificationPublisher;
+    private final InvoiceCreationTransaction invoiceCreationTransaction;
+    private final IdempotencyRecordRepository idempotencyRecordRepository;
+    private final ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
     public List<InvoiceResponse> findAll() {
@@ -79,36 +87,37 @@ public class InvoiceService {
         return new InvoiceDetailResponse(InvoiceResponse.from(getOrThrow(id)), null, null);
     }
 
-    public InvoiceResponse create(InvoiceRequest r) {
-        // 1. Duplicate check BEFORE any remote call
-        if (repository.existsBySubscriptionIdAndPeriode(r.subscriptionId(), r.periode())) {
-            throw new DuplicateResourceException("Une facture existe déjà pour l'abonnement "
-                    + r.subscriptionId() + " et la période " + r.periode());
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public CreationResult<InvoiceResponse> create(String idempotencyKey, InvoiceRequest request) {
+        String key = idempotencyKey.trim();
+        String requestHash = hashRequest(request);
+        try {
+            return invoiceCreationTransaction.create(key, requestHash, request);
+        } catch (DataIntegrityViolationException ex) {
+            IdempotencyRecord concurrentRecord = idempotencyRecordRepository.findByIdempotencyKey(key)
+                    .orElseThrow(() -> ex);
+            return replayOrConflict(concurrentRecord, requestHash);
         }
+    }
 
-        // 2. Subscription must exist (404) and be ACTIVE; strict mode: 503 if service-abonnements is down
-        SubscriptionDto sub = resilientRequests.getSubscriptionStrict(r.subscriptionId());
-        if (!"ACTIVE".equals(sub.statut())) {
-            throw new InvalidStateException("Abonnement non actif : " + sub.statut());
-        }
-        if (!sub.clientId().equals(r.clientId())) {
-            throw new InvalidStateException("Le client ne correspond pas à l'abonnement");
-        }
+    private String hashRequest(InvoiceRequest request) {
+        return CanonicalRequestHasher.sha256(request, objectMapper);
+    }
 
-        // 3. Client must exist (404) and be ACTIF; strict mode: 503 if service-clients is down
-        ClientDto client = resilientRequests.getClientStrict(r.clientId());
-        if (!"ACTIF".equals(client.statut())) {
-            throw new InvalidStateException("Client suspendu");
+    CreationResult<InvoiceResponse> replayOrConflict(IdempotencyRecord record, String requestHash) {
+        if (!record.getRequestHash().equals(requestHash)) {
+            throw new DuplicateResourceException(
+                    "Cette clé Idempotency-Key a déjà été utilisée avec une requête différente");
         }
-
-        Invoice invoice = new Invoice();
-        invoice.setSubscriptionId(r.subscriptionId());
-        invoice.setClientId(r.clientId());
-        invoice.setPeriode(r.periode());
-        invoice.setEcheance(r.echeance());
-        invoice.setStatut(StatutInvoice.BROUILLON);
-        remplirLignes(invoice, r.lignes());
-        return InvoiceResponse.from(repository.save(invoice));
+        try {
+            InvoiceResponse snapshot = objectMapper.readValue(record.getResponseBody(), InvoiceResponse.class);
+            InvoiceResponse original = new InvoiceResponse(record.getResourceId(), snapshot.subscriptionId(),
+                    snapshot.clientId(), snapshot.periode(), snapshot.montantHT(), snapshot.montantTTC(),
+                    snapshot.echeance(), snapshot.statut(), snapshot.lignes());
+            return new CreationResult<>(original, true);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalStateException("Impossible de relire la réponse idempotente", ex);
+        }
     }
 
     /** Only a BROUILLON invoice can be modified. */

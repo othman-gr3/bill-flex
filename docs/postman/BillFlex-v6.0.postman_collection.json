@@ -1,0 +1,491 @@
+{
+  "info": {
+    "name": "Bill-Flex v6.0 - Résilience et idempotence",
+    "description": "Exécuter les requêtes dans l'ordre indiqué dans docs/postman/README.md. Les arrêts/redémarrages de service restent manuels.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "facturationUrl", "value": "http://localhost:8082" },
+    { "key": "notificationUrl", "value": "http://localhost:8084" },
+    { "key": "invoiceKey", "value": "" },
+    { "key": "invoiceId", "value": "" },
+    { "key": "invoicePeriod", "value": "" },
+    { "key": "invoiceDueDate", "value": "" },
+    { "key": "paymentKey", "value": "" },
+    { "key": "paymentId", "value": "" },
+    { "key": "paymentInvoiceRef", "value": "9001" },
+    { "key": "outageKey", "value": "" },
+    { "key": "outagePeriod", "value": "" },
+    { "key": "outageDueDate", "value": "" },
+    { "key": "missingSubscriptionKey", "value": "" },
+    { "key": "missingSubscriptionPeriod", "value": "" },
+    { "key": "missingSubscriptionDueDate", "value": "" },
+    { "key": "breakerKey", "value": "" },
+    { "key": "breakerPeriod", "value": "" },
+    { "key": "breakerDueDate", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "A-D - Idempotence des factures",
+      "item": [
+        {
+          "name": "A - Créer une facture (201, nouvelle clé)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('invoiceKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('invoiceDueDate', new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10));",
+                  "pm.sendRequest({ url: pm.collectionVariables.get('baseUrl') + '/service-facturation/invoices', method: 'GET' }, function (error, response) {",
+                  "  if (error) { throw error; }",
+                  "  const used = response.json().filter(function (invoice) { return invoice.subscriptionId === 3; }).map(function (invoice) { return invoice.periode; });",
+                  "  const start = new Date(); start.setDate(1);",
+                  "  for (let offset = 0; offset < 120; offset++) {",
+                  "    const candidate = new Date(start.getFullYear(), start.getMonth() + offset, 1);",
+                  "    const period = candidate.getFullYear() + '-' + String(candidate.getMonth() + 1).padStart(2, '0');",
+                  "    if (!used.includes(period)) { pm.collectionVariables.set('invoicePeriod', period); return; }",
+                  "  }",
+                  "  throw new Error('Aucune période libre pour subscription 3');",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Création facture: HTTP 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('La réponse contient une facture et une Location', function () { pm.expect(pm.response.json().id).to.be.a('number'); pm.expect(pm.response.headers.get('Location')).to.be.ok; });",
+                  "pm.collectionVariables.set('invoiceId', pm.response.json().id);",
+                  "pm.test('Aucune réponse de replay sur la création initiale', function () { pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.be.null; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Subscription 3 et client 3 sont présents et actifs dans les données de démonstration. La période libre est calculée avant l'envoi.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{invoiceKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{invoicePeriod}}\",\n  \"echeance\": \"{{invoiceDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Abonnement de démonstration\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "B - Rejouer la même facture (201, même id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Replay: HTTP 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Replay signalé et même id', function () { pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'); pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('invoiceId'))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Réutilise exactement la clé et le corps de la requête A.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{invoiceKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{invoicePeriod}}\",\n  \"echeance\": \"{{invoiceDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Abonnement de démonstration\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "B - Vérifier la liste sans doublon",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Liste: HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const matches = pm.response.json().filter(function (invoice) { return invoice.subscriptionId === 3 && invoice.periode === pm.collectionVariables.get('invoicePeriod'); });",
+                  "pm.test('Une seule facture existe pour cette période', function () { pm.expect(matches.length).to.eql(1); pm.expect(matches[0].id).to.eql(Number(pm.collectionVariables.get('invoiceId'))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "description": "Après A et B, la liste ne contient qu'une facture pour subscription 3 et la période générée.",
+            "header": [],
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "C - Même clé, corps différent (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Clé réutilisée avec un autre corps: HTTP 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('ApiError explique le conflit', function () { pm.expect(pm.response.json().status).to.eql(409); pm.expect(pm.response.json().message).to.include('requête différente'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "La clé de A est conservée, mais le libellé et le montant diffèrent.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{invoiceKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{invoicePeriod}}\",\n  \"echeance\": \"{{invoiceDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Corps différent\", \"quantite\": 1, \"prixUnitaire\": 30.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "D - Clé absente (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Clé absente: HTTP 400', function () { pm.response.to.have.status(400); });",
+                  "pm.test('Erreur standard ApiError', function () { pm.expect(pm.response.json().status).to.eql(400); pm.expect(pm.response.json()).to.have.property('timestamp'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Aucun en-tête Idempotency-Key n'est envoyé.",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{invoicePeriod}}\",\n  \"echeance\": \"{{invoiceDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Test sans clé\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        }
+      ]
+    },
+    {
+      "name": "E - Idempotence des paiements",
+      "item": [
+        {
+          "name": "Créer un paiement (201)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.collectionVariables.set('paymentKey', pm.variables.replaceIn('{{$guid}}'));"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Création paiement: HTTP 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('paymentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Client 1 existe dans les données de démonstration; la référence de facture est une valeur de test locale.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{paymentKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientId\": 1,\n  \"invoiceId\": {{paymentInvoiceRef}},\n  \"montant\": 10.00,\n  \"moyen\": \"CARTE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-clients/payments"
+          }
+        },
+        {
+          "name": "Rejouer le même paiement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Replay paiement: HTTP 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Replay: même id et indicateur', function () { pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'); pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('paymentId'))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Même Idempotency-Key et même corps que la création précédente.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{paymentKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientId\": 1,\n  \"invoiceId\": {{paymentInvoiceRef}},\n  \"montant\": 10.00,\n  \"moyen\": \"CARTE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-clients/payments"
+          }
+        },
+        {
+          "name": "Vérifier qu'un seul paiement est listé",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Liste paiements: HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const matches = pm.response.json().filter(function (payment) { return payment.clientId === 1 && payment.invoiceId === Number(pm.collectionVariables.get('paymentInvoiceRef')); });",
+                  "pm.test('Un seul paiement existe', function () { pm.expect(matches.length).to.eql(1); pm.expect(matches[0].id).to.eql(Number(pm.collectionVariables.get('paymentId'))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "description": "Le replay ne crée pas de deuxième paiement.",
+            "header": [],
+            "url": "{{baseUrl}}/service-clients/payments"
+          }
+        }
+      ]
+    },
+    {
+      "name": "F-H - Résilience service-abonnements",
+      "item": [
+        {
+          "name": "F1 - Service abonnements arrêté: création échoue 503",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('outageKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('outageDueDate', new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10));",
+                  "pm.sendRequest({ url: pm.collectionVariables.get('baseUrl') + '/service-facturation/invoices', method: 'GET' }, function (error, response) {",
+                  "  if (error) { throw error; }",
+                  "  const used = response.json().filter(function (invoice) { return invoice.subscriptionId === 3; }).map(function (invoice) { return invoice.periode; });",
+                  "  const start = new Date(); start.setDate(1);",
+                  "  for (let offset = 0; offset < 120; offset++) {",
+                  "    const candidate = new Date(start.getFullYear(), start.getMonth() + offset, 1);",
+                  "    const period = candidate.getFullYear() + '-' + String(candidate.getMonth() + 1).padStart(2, '0');",
+                  "    if (!used.includes(period)) { pm.collectionVariables.set('outagePeriod', period); return; }",
+                  "  }",
+                  "  throw new Error('Aucune période libre pour subscription 3');",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Service distant arrêté: HTTP 503', function () { pm.response.to.have.status(503); });",
+                  "pm.test('Réponse ApiError', function () { pm.expect(pm.response.json().status).to.eql(503); pm.expect(pm.response.json()).to.have.property('timestamp'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Avant l'envoi, arrêter service-abonnements. Après le 503, le même Idempotency-Key peut être réutilisé.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{outageKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{outagePeriod}}\",\n  \"echeance\": \"{{outageDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Test de reprise\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "F2 - Après redémarrage, même clé réussit (201)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Nouvelle tentative: HTTP 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('La clé non consommée produit une création initiale', function () { pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.be.null; pm.expect(pm.response.json().id).to.be.a('number'); });",
+                  "pm.collectionVariables.set('invoiceId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Redémarrer service-abonnements avant cet appel. Réutilise exactement le corps et la clé de F1.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{outageKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{outagePeriod}}\",\n  \"echeance\": \"{{outageDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Test de reprise\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "G - Abonnement inconnu (404, pas de retry)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('missingSubscriptionKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('missingSubscriptionDueDate', new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10));",
+                  "pm.sendRequest({ url: pm.collectionVariables.get('baseUrl') + '/service-facturation/invoices', method: 'GET' }, function (error, response) {",
+                  "  if (error) { throw error; }",
+                  "  const used = response.json().filter(function (invoice) { return invoice.subscriptionId === 3; }).map(function (invoice) { return invoice.periode; });",
+                  "  const start = new Date(); start.setDate(1);",
+                  "  for (let offset = 0; offset < 120; offset++) {",
+                  "    const candidate = new Date(start.getFullYear(), start.getMonth() + offset, 1);",
+                  "    const period = candidate.getFullYear() + '-' + String(candidate.getMonth() + 1).padStart(2, '0');",
+                  "    if (!used.includes(period)) { pm.collectionVariables.set('missingSubscriptionPeriod', period); return; }",
+                  "  }",
+                  "  throw new Error('Aucune période libre pour subscription 3');",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Abonnement absent: HTTP 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('Réponse ApiError', function () { pm.expect(pm.response.json().status).to.eql(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "L'ID 999999 n'existe pas dans les données de démonstration; la clé n'est pas consommée par cet échec.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{missingSubscriptionKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 999999,\n  \"clientId\": 3,\n  \"periode\": \"{{missingSubscriptionPeriod}}\",\n  \"echeance\": \"{{missingSubscriptionDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Abonnement absent\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "H1 - Répéter pendant l'arrêt pour ouvrir le circuit (503)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('breakerKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('breakerDueDate', new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10));",
+                  "pm.sendRequest({ url: pm.collectionVariables.get('baseUrl') + '/service-facturation/invoices', method: 'GET' }, function (error, response) {",
+                  "  if (error) { throw error; }",
+                  "  const used = response.json().filter(function (invoice) { return invoice.subscriptionId === 3; }).map(function (invoice) { return invoice.periode; });",
+                  "  const start = new Date(); start.setDate(1);",
+                  "  for (let offset = 0; offset < 120; offset++) {",
+                  "    const candidate = new Date(start.getFullYear(), start.getMonth() + offset, 1);",
+                  "    const period = candidate.getFullYear() + '-' + String(candidate.getMonth() + 1).padStart(2, '0');",
+                  "    if (!used.includes(period)) { pm.collectionVariables.set('breakerPeriod', period); return; }",
+                  "  }",
+                  "  throw new Error('Aucune période libre pour subscription 3');",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Service arrêté: HTTP 503', function () { pm.response.to.have.status(503); });",
+                  "pm.test('ApiError reçu', function () { pm.expect(pm.response.json().status).to.eql(503); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "description": "Arrêter service-abonnements et exécuter cette requête au moins quatre fois avec le Runner. Chaque exécution génère une clé et une période libre.",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{breakerKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{breakerPeriod}}\",\n  \"echeance\": \"{{breakerDueDate}}\",\n  \"lignes\": [{ \"libelle\": \"Test circuit ouvert\", \"quantite\": 1, \"prixUnitaire\": 29.00 }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          }
+        },
+        {
+          "name": "H2 - État Circuit Breaker via Actuator",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Actuator circuitbreakers: HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('La réponse expose les breakers', function () { pm.expect(pm.response.json()).to.have.property('circuitBreakers'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "description": "Après les appels H1, le breaker service-abonnements doit apparaître OPEN dans cette réponse.",
+            "header": [],
+            "url": "{{facturationUrl}}/actuator/circuitbreakers"
+          }
+        }
+      ]
+    }
+  ]
+}

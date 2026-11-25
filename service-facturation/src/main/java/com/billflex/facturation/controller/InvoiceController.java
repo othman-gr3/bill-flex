@@ -3,12 +3,15 @@ package com.billflex.facturation.controller;
 import com.billflex.facturation.dto.InvoiceDetailResponse;
 import com.billflex.facturation.dto.InvoiceRequest;
 import com.billflex.facturation.dto.InvoiceResponse;
+import com.billflex.facturation.service.CreationResult;
 import com.billflex.facturation.service.InvoiceService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.validation.annotation.Validated;
 
 import java.net.URI;
 import java.util.List;
@@ -16,6 +19,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/invoices")
 @RequiredArgsConstructor
+@Validated
 public class InvoiceController {
 
     private final InvoiceService service;
@@ -31,11 +35,18 @@ public class InvoiceController {
     }
 
     @PostMapping
-    public ResponseEntity<InvoiceResponse> create(@Valid @RequestBody InvoiceRequest request) {
-        InvoiceResponse created = service.create(request);
+    public ResponseEntity<InvoiceResponse> create(
+            @RequestHeader("Idempotency-Key") @NotBlank String idempotencyKey,
+            @Valid @RequestBody InvoiceRequest request) {
+        CreationResult<InvoiceResponse> result = service.create(idempotencyKey, request);
+        InvoiceResponse created = result.body();
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}").buildAndExpand(created.id()).toUri();
-        return ResponseEntity.created(location).body(created);
+        ResponseEntity.BodyBuilder response = ResponseEntity.created(location);
+        if (result.replayed()) {
+            response.header("Idempotent-Replayed", "true");
+        }
+        return response.body(created);
     }
 
     @PutMapping("/{id}")

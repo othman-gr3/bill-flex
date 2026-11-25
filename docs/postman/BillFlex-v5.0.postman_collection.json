@@ -153,7 +153,7 @@
           "name": "Lister les invoices et sélectionner des BROUILLON",
           "request": {
             "method": "GET",
-            "description": "Sélectionne les deux premières invoices BROUILLON de la réponse et les stocke dans invoiceId et secondInvoiceId. Avec le seed actuel, l'id 3 est BROUILLON.",
+            "description": "Stocke la première invoice BROUILLON dans invoiceId et prépare une période yyyy-MM libre pour la subscription 3. La requête suivante crée la deuxième invoice BROUILLON.",
             "header": [],
             "url": "{{baseUrl}}/service-facturation/invoices"
           },
@@ -164,10 +164,54 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "const invoices = pm.response.json().filter(function (invoice) { return invoice.statut === 'BROUILLON'; });",
-                  "pm.test('At least one BROUILLON exists', function () { pm.expect(invoices.length).to.be.greaterThan(0); });",
-                  "if (invoices.length > 0) { pm.collectionVariables.set('invoiceId', invoices[0].id); }",
-                  "if (invoices.length > 1) { pm.collectionVariables.set('secondInvoiceId', invoices[1].id); }"
+                  "const invoices = pm.response.json();",
+                  "const drafts = invoices.filter(function (invoice) { return invoice.statut === 'BROUILLON'; });",
+                  "pm.test('At least one BROUILLON exists', function () { pm.expect(drafts.length).to.be.greaterThan(0); });",
+                  "if (drafts.length > 0) { pm.collectionVariables.set('invoiceId', drafts[0].id); }",
+                  "const occupiedPeriods = new Set(invoices.filter(function (invoice) { return String(invoice.subscriptionId) === '3'; }).map(function (invoice) { return invoice.periode; }));",
+                  "const now = new Date();",
+                  "let availablePeriod = null;",
+                  "for (let offset = 0; offset < 24 && availablePeriod === null; offset++) {",
+                  "  const candidateDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));",
+                  "  const candidatePeriod = candidateDate.getUTCFullYear() + '-' + String(candidateDate.getUTCMonth() + 1).padStart(2, '0');",
+                  "  if (!occupiedPeriods.has(candidatePeriod)) { availablePeriod = candidatePeriod; }",
+                  "}",
+                  "pm.test('A unique invoice period is available for subscription 3', function () { pm.expect(availablePeriod).to.not.eql(null); });",
+                  "if (availablePeriod !== null) { pm.collectionVariables.set('newInvoicePeriod', availablePeriod); }",
+                  "const dueDate = new Date();",
+                  "dueDate.setUTCDate(dueDate.getUTCDate() + 30);",
+                  "pm.collectionVariables.set('newInvoiceDueDate', dueDate.toISOString().slice(0, 10));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Créer une facture BROUILLON (pour le test différé)",
+          "request": {
+            "method": "POST",
+            "description": "Crée la deuxième facture BROUILLON avec la subscription 3 et le client 3 (tous deux ACTIFS dans les seeds). La période libre est calculée lors de la requête GET précédente puis stockée dans newInvoicePeriod; l'id créé est enregistré dans secondInvoiceId.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 3,\n  \"clientId\": 3,\n  \"periode\": \"{{newInvoicePeriod}}\",\n  \"echeance\": \"{{newInvoiceDueDate}}\",\n  \"lignes\": [\n    {\n      \"libelle\": \"Test notification différée\",\n      \"quantite\": 1,\n      \"prixUnitaire\": 10.00\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/service-facturation/invoices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Created invoice is BROUILLON', function () { pm.expect(pm.response.json().statut).to.eql('BROUILLON'); });",
+                  "pm.collectionVariables.set('secondInvoiceId', pm.response.json().id);"
                 ]
               }
             }
@@ -249,7 +293,7 @@
           "name": "Émettre la première invoice consommateur arrêté",
           "request": {
             "method": "PATCH",
-            "description": "Arrêter notification-service avant l'appel. Préparer une invoice BROUILLON et exécuter cette requête : HTTP 200. RabbitMQ doit ensuite afficher Ready = 1.",
+            "description": "Faire un redémarrage de service-facturation pour réinitialiser sa base H2, puis exécuter le GET de sélection et le POST de création de la section B afin de disposer de deux factures BROUILLON distinctes. Arrêter notification-service, puis exécuter cette requête avec invoiceId : HTTP 200, Ready=1.",
             "header": [],
             "url": "{{baseUrl}}/service-facturation/invoices/{{invoiceId}}/emettre"
           },
@@ -269,7 +313,7 @@
           "name": "Émettre la deuxième invoice consommateur arrêté",
           "request": {
             "method": "PATCH",
-            "description": "Exécuter avec secondInvoiceId défini par la requête de liste : HTTP 200. RabbitMQ doit afficher Ready = 2, puis deux emails après redémarrage de notification-service.",
+            "description": "Avec notification-service toujours arrêté, exécuter la requête avec secondInvoiceId créée par le POST de la section B : HTTP 200. RabbitMQ doit afficher Ready=2. Redémarrer notification-service; deux emails apparaissent et Ready/Unacked reviennent à 0.",
             "header": [],
             "url": "{{baseUrl}}/service-facturation/invoices/{{secondInvoiceId}}/emettre"
           },
@@ -294,7 +338,7 @@
           "name": "Broker arrêté - émission reste 200",
           "request": {
             "method": "PATCH",
-            "description": "Arrêter RabbitMQ avec `docker stop rabbitmq` avant l'appel. L'émission doit rester HTTP 200, l'erreur AMQP doit être journalisée par service-facturation, puis exécuter `docker start rabbitmq`. Utiliser une invoice BROUILLON non encore émise.",
+            "description": "Pour disposer d'une invoice fraîche, redémarrer service-facturation et exécuter les requêtes GET puis POST de création de la section B, sans exécuter l'émission de la section B. Arrêter RabbitMQ avec `docker stop rabbitmq`, émettre secondInvoiceId : l'émission doit rester HTTP 200 et l'erreur AMQP doit être journalisée par service-facturation. Restaurer ensuite le broker avec `docker start rabbitmq`.",
             "header": [],
             "url": "{{baseUrl}}/service-facturation/invoices/{{secondInvoiceId}}/emettre"
           },
@@ -305,6 +349,40 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "F - Gateway excludes internal notification service",
+      "item": [
+        {
+          "name": "Notification-service inaccessible via Gateway - 404",
+          "request": {
+            "method": "POST",
+            "description": "notification-service est enregistré dans Eureka mais exclu du discovery locator de la Gateway. Résultat attendu : aucun routage vers le service et HTTP 404.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destinataire\": \"client@example.com\",\n  \"objet\": \"Test Gateway interne\",\n  \"contenu\": \"Cette requête ne doit pas parvenir à notification-service.\"\n}"
+            },
+            "url": "{{baseUrl}}/notification-service/notifications/email"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404 because notification-service is excluded from discovery routes', function () { pm.response.to.have.status(404); });"
                 ]
               }
             }

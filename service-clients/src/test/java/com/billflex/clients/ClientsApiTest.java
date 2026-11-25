@@ -6,6 +6,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import com.billflex.clients.repository.IdempotencyRecordRepository;
+import com.billflex.clients.repository.PaymentRepository;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -16,6 +18,12 @@ class ClientsApiTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private PaymentRepository paymentRepository;
+
+    @Autowired
+    private IdempotencyRecordRepository idempotencyRecordRepository;
 
     @Test
     void listClients_returns200() throws Exception {
@@ -72,8 +80,69 @@ class ClientsApiTest {
         String body = """
                 {"clientId":999,"invoiceId":1,"montant":10.00,"moyen":"CARTE"}
                 """;
-        mockMvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/payments").header("Idempotency-Key", "payment-unknown-client")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createPayment_sameKeyAndBody_replaysOriginalWithoutDuplicate() throws Exception {
+        String key = "payment-replay-9001";
+        String body = """
+                {"clientId":1,"invoiceId":9001,"montant":10.00,"moyen":"CARTE"}
+                """;
+        long before = paymentRepository.countByClient_IdAndInvoiceId(1L, 9001L);
+
+        String firstResponse = mockMvc.perform(post("/payments").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        long originalId = mapper.readTree(firstResponse).get("id").asLong();
+
+        String replayResponse = mockMvc.perform(post("/payments").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.id").value(originalId))
+                .andReturn().getResponse().getContentAsString();
+
+        org.junit.jupiter.api.Assertions.assertEquals(mapper.readTree(firstResponse), mapper.readTree(replayResponse));
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1,
+                paymentRepository.countByClient_IdAndInvoiceId(1L, 9001L));
+        org.junit.jupiter.api.Assertions.assertTrue(idempotencyRecordRepository.findByIdempotencyKey(key).isPresent());
+    }
+
+    @Test
+    void createPayment_sameKeyDifferentBody_returns409() throws Exception {
+        String key = "payment-different-body";
+        mockMvc.perform(post("/payments").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":1,\"invoiceId\":9002,\"montant\":10.00,\"moyen\":\"CARTE\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/payments").header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":1,\"invoiceId\":9002,\"montant\":20.00,\"moyen\":\"CARTE\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("requête différente")));
+    }
+
+    @Test
+    void createPayment_missingIdempotencyKey_returns400() throws Exception {
+        mockMvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":1,\"invoiceId\":9003,\"montant\":10.00,\"moyen\":\"CARTE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
+    void createPayment_blankIdempotencyKey_returns400() throws Exception {
+        mockMvc.perform(post("/payments").header("Idempotency-Key", "   ")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":1,\"invoiceId\":9004,\"montant\":10.00,\"moyen\":\"CARTE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
     }
 
     @Test
