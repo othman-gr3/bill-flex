@@ -229,6 +229,20 @@ Après émission d'une facture (`PATCH /service-facturation/invoices/{id}/emettr
 
 Routage statique (optionnel) : lancer la Gateway avec le profil `statique` (fichier `config-repo/gateway-service-statique.properties`), les chemins sont alors exposés sans préfixe (`/clients`, `/plans`, `/invoices`, ...).
 
+## Collections Postman
+
+Les collections sont disponibles dans `docs/postman/`. Elles doivent être exécutées après le démarrage des services indiqués :
+
+| Collection | Scénarios principaux |
+|---|---|
+| `BillFlex-v1.0.postman_collection.json` | CRUD direct sur les services métier |
+| `BillFlex-v2.0.postman_collection.json` | Appels via la Gateway et vérification d'Eureka |
+| `BillFlex-v3.0.postman_collection.json` | Agrégation Config Server, accès directs et accès via Gateway |
+| `BillFlex-v4.0.postman_collection.json` | Communication OpenFeign entre facturation, abonnements et clients |
+| `BillFlex-v5.0.postman_collection.json` | Émission de facture, notifications RabbitMQ et test direct du service email |
+
+La collection V4 doit être exécutée dans l'ordre : elle crée un abonnement de test, puis réutilise son identifiant pour vérifier les appels Feign et les règles de cohérence. Les tests de notification V5 nécessitent RabbitMQ et Mailpit.
+
 ## Stack technique
 
 Java 17, Spring Boot 3.5.6, Spring Cloud 2025.0.0 (Eureka, Gateway reactive, Config Server), Maven.

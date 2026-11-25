@@ -1,0 +1,206 @@
+{
+  "info": {
+    "name": "Bill-Flex v4.0 - Communication interservices avec OpenFeign",
+    "description": "Vérifie les appels OpenFeign du service de facturation vers les services d'abonnements et de clients. Exécuter séquentiellement après avoir démarré Eureka, Config Server, les services métier et la Gateway.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gateway",
+      "value": "http://localhost:8080"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.collectionVariables.set('testDate', moment().format('YYYY-MM-DD'));",
+          "pm.collectionVariables.set('invoicePeriod', moment().add(1, 'months').format('YYYY-MM'));",
+          "pm.collectionVariables.set('mismatchPeriod', moment().add(2, 'months').format('YYYY-MM'));",
+          "pm.collectionVariables.set('futureDueDate', moment().add(2, 'months').date(1).format('YYYY-MM-DD'));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Préparation des données de test - exécuter dans l’ordre",
+      "item": [
+        {
+          "name": "Créer un abonnement actif de test - 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planId\": 1,\n  \"clientId\": 1,\n  \"dateDebut\": \"{{testDate}}\"\n}"
+            },
+            "url": "{{gateway}}/service-abonnements/subscriptions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Un identifiant d’abonnement est retourné', function () { pm.expect(body.id).to.be.a('number'); });",
+                  "pm.collectionVariables.set('testSubscriptionId', body.id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OpenFeign - enrichir une facture avec les données distantes",
+      "item": [
+        {
+          "name": "Détail facture 3 - client, abonnement et plan via Feign",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gateway}}/service-facturation/invoices/3/detail"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('La réponse contient la facture, le client et l’abonnement', function () { pm.expect(body.facture.id).to.eql(3); pm.expect(body.client.id).to.eql(3); pm.expect(body.abonnement.id).to.eql(3); });",
+                  "pm.test('Le client distant est récupéré', function () { pm.expect(body.client.nom).to.eql('Maghreb Logistics'); pm.expect(body.client.email).to.eql('finance@maghreb-log.ma'); });",
+                  "pm.test('Le plan distant est récupéré par l’abonnement', function () { pm.expect(body.abonnement.planNom).to.eql('Starter'); pm.expect(body.abonnement.statut).to.eql('ACTIVE'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Facture avec abonnement actif et client correspondant - 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": {{testSubscriptionId}},\n  \"clientId\": 1,\n  \"periode\": \"{{invoicePeriod}}\",\n  \"echeance\": \"{{futureDueDate}}\",\n  \"lignes\": [\n    {\n      \"libelle\": \"Test OpenFeign\",\n      \"quantite\": 1,\n      \"prixUnitaire\": 29.00\n    }\n  ]\n}"
+            },
+            "url": "{{gateway}}/service-facturation/invoices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('La facture est créée en brouillon', function () { pm.expect(body.statut).to.eql('BROUILLON'); pm.expect(body.subscriptionId).to.eql(Number(pm.collectionVariables.get('testSubscriptionId'))); pm.expect(body.clientId).to.eql(1); });",
+                  "pm.collectionVariables.set('createdInvoiceId', body.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Détail de la facture créée - données distantes via Feign",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gateway}}/service-facturation/invoices/{{createdInvoiceId}}/detail"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Les données du client et du plan sont enrichies', function () { pm.expect(body.client.id).to.eql(1); pm.expect(body.client.nom).to.eql('Atlas Tech SARL'); pm.expect(body.abonnement.planNom).to.eql('Starter'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OpenFeign - validation et erreurs distantes",
+      "item": [
+        {
+          "name": "Abonnement distant inexistant - 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": 999,\n  \"clientId\": 1,\n  \"periode\": \"{{invoicePeriod}}\",\n  \"echeance\": \"{{futureDueDate}}\",\n  \"lignes\": [\n    {\n      \"libelle\": \"Test abonnement introuvable\",\n      \"quantite\": 1,\n      \"prixUnitaire\": 29.00\n    }\n  ]\n}"
+            },
+            "url": "{{gateway}}/service-facturation/invoices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Un 404 du service abonnements est propagé comme 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client différent de celui de l’abonnement - 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subscriptionId\": {{testSubscriptionId}},\n  \"clientId\": 2,\n  \"periode\": \"{{mismatchPeriod}}\",\n  \"echeance\": \"{{futureDueDate}}\",\n  \"lignes\": [\n    {\n      \"libelle\": \"Test client incohérent\",\n      \"quantite\": 1,\n      \"prixUnitaire\": 29.00\n    }\n  ]\n}"
+            },
+            "url": "{{gateway}}/service-facturation/invoices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Le service refuse un client incohérent avec un 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

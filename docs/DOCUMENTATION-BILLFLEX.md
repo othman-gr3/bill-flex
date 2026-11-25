@@ -105,7 +105,7 @@ bill-flex/
 ├── .gitignore
 ├── docs/
 │   ├── DOCUMENTATION-BILLFLEX.md   (this file)
-│   ├── postman/                    (BillFlex-v1.0 / v2.0 / v3.0 collections)
+│   ├── postman/                    (BillFlex-v1.0 / v2.0 / v3.0 / v4.0 / v5.0 collections)
 │   └── screenshots/
 ├── config-repo/                 (central configuration, read by config-server)
 │   ├── application.properties
@@ -147,6 +147,7 @@ src/test/resources/application.properties        (from Jalon 3)
 | 1 | `v1.0` | Business services with Controller/Service/Repository, validated DTOs, REST API, HTTP codes, error handling, Postman or Swagger tests | 3 services, tests, Postman v1.0 |
 | 2 | `v2.0` | Eureka server, Gateway with dynamic routing, updated architecture schema | `eureka-server`, `gateway-service`, Postman v2.0 |
 | 3 | `v3.0` | `config-repo` (global file plus one per service), Config Server, services and Gateway consuming central config | `config-repo`, `config-server`, 2-line local config, Postman v3.0 |
+| 4 | `v4.0` | Synchronous inter-service calls through Eureka-discovered OpenFeign clients | Feign clients in `service-facturation`, remote DTOs, error mapping, Postman v4.0 |
 
 ---
 
@@ -907,7 +908,15 @@ Publishing before commit could leave an email in the queue for an invoice whose 
 
 ### 9.6 Jalon 4 note
 
-OpenFeign communication, already merged; details to be completed by the teammate who did it.
+The synchronous OpenFeign clients are implemented in `service-facturation`:
+
+- `ClientsClient` calls `service-clients` by its Eureka service name.
+- `AbonnementsClient` calls `service-abonnements` by its Eureka service name.
+- `InvoiceService.create` checks that the remote subscription is active, that its client ID matches, and that the client exists and is active.
+- `InvoiceService.getDetail` combines invoice data with client, subscription and plan data fetched from the other services.
+- `GlobalExceptionHandler` maps a remote 404 to 404 and unavailable remote services to 503.
+
+The collection `docs/postman/BillFlex-v4.0.postman_collection.json` tests the enriched invoice detail, a valid invoice creation, a missing remote subscription and a client/subscription mismatch. Run it in order: it first creates a test subscription and saves its ID as a collection variable for the following requests.
 
 ### 9.7 Problems and traps
 
