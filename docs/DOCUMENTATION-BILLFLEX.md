@@ -108,8 +108,8 @@ bill-flex/
 ├── .gitignore
 ├── docs/
 │   ├── DOCUMENTATION-BILLFLEX.md   (this file)
-│   ├── postman/                    (BillFlex-v1.0 to v5.0 collections)
-│   └── screenshots/                (V5 capture checklist)
+│   ├── postman/                    (BillFlex-v1.0 / v2.0 / v3.0 / v4.0 / v5.0 collections)
+│   └── screenshots/
 ├── config-repo/                 (central configuration, read by config-server)
 │   ├── application.properties
 │   ├── service-abonnements.properties
@@ -152,8 +152,7 @@ src/test/resources/application.properties        (from Jalon 3)
 | 1 | `v1.0` | Business services with Controller/Service/Repository, validated DTOs, REST API, HTTP codes, error handling, Postman or Swagger tests | 3 services, tests, Postman v1.0 |
 | 2 | `v2.0` | Eureka server, Gateway with dynamic routing, updated architecture schema | `eureka-server`, `gateway-service`, Postman v2.0 |
 | 3 | `v3.0` | `config-repo` (global file plus one per service), Config Server, services and Gateway consuming central config | `config-repo`, `config-server`, 2-line local config, Postman v3.0 |
-| 4 | `v4.0` | OpenFeign communication | OpenFeign clients in `service-facturation` |
-| 5 | `v5.0` | Asynchronous RabbitMQ communication and notifications | `notification-service`, durable queue, Mailpit, Docker, Postman v5.0 |
+| 4 | `v4.0` | Synchronous inter-service calls through Eureka-discovered OpenFeign clients | Feign clients in `service-facturation`, remote DTOs, error mapping, Postman v4.0 |
 
 ---
 
@@ -898,156 +897,44 @@ The business event is invoice emission: `PATCH /invoices/{id}/emettre` changes `
 
 `notification-service` consumes the message with `@RabbitListener`, validates the record explicitly with Jakarta `Validator`, and calls `NotificationService`. That service creates a `SimpleMailMessage` from `noreply@billflex.com` and sends it with `JavaMailSender` to Mailpit.
 
-This is asynchronous: the HTTP response is returned after the invoice transaction while RabbitMQ delivery and SMTP sending happen separately.
+| File | Change |
+|---|---|
+| root `pom.xml` | + `notification-service` module |
+| `service-facturation/pom.xml` | + AMQP starter |
+| `service-facturation` | durable queue, JSON converter, publisher, after-commit publication and tests |
+| `config-repo/application.properties` | shared local RabbitMQ connection |
+| `config-repo/notification-service.properties` | port, Mailpit and listener retry settings |
+| `README.md` | architecture, ports, Docker commands and test procedure |
+| `docs/postman/BillFlex-v5.0.postman_collection.json` | success, validation, 404/409 and deferred-processing cases |
+| `docs/DOCUMENTATION-BILLFLEX.md` | this section and new traps/glossary terms |
+| `docker-compose.yml` | Mailpit and RabbitMQ containers |
 
-### 10.3 Real code
+### 9.6 Jalon 4 note
 
-The producer declares the queue and converter in `service-facturation/src/main/java/com/billflex/facturation/config/RabbitConfig.java`:
+The synchronous OpenFeign clients are implemented in `service-facturation`:
 
-```java
-public static final String QUEUE_EMAIL = "notifications.email";
+- `ClientsClient` calls `service-clients` by its Eureka service name.
+- `AbonnementsClient` calls `service-abonnements` by its Eureka service name.
+- `InvoiceService.create` checks that the remote subscription is active, that its client ID matches, and that the client exists and is active.
+- `InvoiceService.getDetail` combines invoice data with client, subscription and plan data fetched from the other services.
+- `GlobalExceptionHandler` maps a remote 404 to 404 and unavailable remote services to 503.
 
-@Bean
-public Queue emailQueue() {
-    return new Queue(QUEUE_EMAIL, true);
-}
+The collection `docs/postman/BillFlex-v4.0.postman_collection.json` tests the enriched invoice detail, a valid invoice creation, a missing remote subscription and a client/subscription mismatch. Run it in order: it first creates a test subscription and saves its ID as a collection variable for the following requests.
 
-@Bean
-public Jackson2JsonMessageConverter messageConverter() {
-    return new Jackson2JsonMessageConverter();
-}
-```
+### 9.7 Problems and traps
 
-`service-facturation/src/main/java/com/billflex/facturation/messaging/NotificationPublisher.java` sends to the queue:
+- The queue must be declared by the producer as well as the consumer, so it exists while the consumer is stopped.
+- Use `Jackson2JsonMessageConverter` with the Spring Boot 3.5.6 dependency set; do not copy the Spring AMQP 4.x `JacksonJsonMessageConverter` name.
+- `max-attempts` is the Spring Boot 3.x listener retry property; `max-retries` is not used here.
+- Do not add Eureka or Gateway discovery to `notification-service`; its direct controller is only a manual email check.
+- Do not publish from the controller or before `repository.save` commits.
 
-```java
-public void publier(NotificationEmailDto notification) {
-    rabbitTemplate.convertAndSend(RabbitConfig.QUEUE_EMAIL, notification);
-}
-```
+### 9.8 Jalon 5 checklist
 
-The relevant emission flow in `InvoiceService.emettre` saves the invoice, builds the local DTO, and calls the after-commit helper:
-
-```java
-Invoice saved = repository.save(invoice);
-NotificationEmailDto notification = new NotificationEmailDto(
-        client.email(),
-        "Facture n° " + saved.getId() + " émise",
-        """
-                Bonjour %s,
-
-                Votre facture n° %d a été émise.
-                Période : %s
-                Montant TTC : %s
-                Échéance : %s
-                """.formatted(client.nom(), saved.getId(), saved.getPeriode(),
-                saved.getMontantTTC(), saved.getEcheance()));
-publierApresCommit(notification);
-```
-
-`publierApresCommit` registers `afterCommit`; publication failures are caught as `AmqpException` and logged. If synchronization is not active, it publishes directly in the same guarded path.
-
-The consumer in `notification-service/src/main/java/com/billflex/notification/messaging/NotificationConsumer.java` validates before sending:
-
-```java
-@RabbitListener(queues = RabbitConfig.QUEUE_EMAIL)
-public void recevoir(NotificationEmailDto dto) {
-    Set<ConstraintViolation<NotificationEmailDto>> violations = validator.validate(dto);
-    if (!violations.isEmpty()) {
-        throw new ConstraintViolationException(violations);
-    }
-    notificationService.envoyerEmail(dto);
-}
-```
-
-The actual central configuration is:
-
-```properties
-# config-repo/application.properties
-spring.rabbitmq.host=localhost
-spring.rabbitmq.port=5672
-spring.rabbitmq.username=tp
-spring.rabbitmq.password=tp123
-```
-
-```properties
-# config-repo/notification-service.properties
-server.port=8084
-spring.mail.host=localhost
-spring.mail.port=1025
-spring.rabbitmq.listener.simple.retry.enabled=true
-spring.rabbitmq.listener.simple.retry.max-attempts=3
-spring.rabbitmq.listener.simple.retry.initial-interval=2000ms
-spring.rabbitmq.listener.simple.default-requeue-rejected=false
-```
-
-With Spring Boot 3.5.6 and Spring AMQP 3.x, the project uses `Jackson2JsonMessageConverter` and `spring.rabbitmq.listener.simple.retry.max-attempts`. The professor's Boot 4 TP uses the different `JacksonJsonMessageConverter`, `max-retries`, and `spring-boot-starter-webmvc` names; those names must not be copied into this project.
-
-### 10.4 Why these choices
-
-- **After commit:** publishing before commit could leave an email for an invoice whose transaction rolls back. The callback represents only a successfully committed `EMISE` invoice.
-- **Queue on both services:** the producer declares the durable queue so it exists even when the consumer is stopped; the consumer declares the same queue so it can start independently.
-- **Explicit validation:** RabbitMQ messages do not pass through MVC `@Valid` controller binding. The consumer therefore calls `Validator` itself and rejects invalid DTOs.
-- **No Gateway route:** `notification-service` is internal, has no Eureka client dependency, and its only controller is the manual `POST /notifications/email` check.
-- **No DLQ:** the real configuration enables three attempts at two-second intervals and `default-requeue-rejected=false`; no dead-letter exchange is configured.
-
-### 10.5 Steps and verification
-
-1. Start Mailpit and RabbitMQ with the documented Docker commands.
-2. Push `config-repo` to the branch read by Config Server before starting Config Server.
-3. Start Eureka, Config Server, the three business services, `notification-service`, and then the Gateway.
-4. Call `PATCH http://localhost:8080/service-facturation/invoices/{id}/emettre`.
-5. Verify HTTP 200 with `statut: "EMISE"` and inspect the email at `http://localhost:8025`.
-6. Stop `notification-service`, emit two `BROUILLON` invoices, verify `Ready = 2`, restart the consumer, and verify two emails with `Ready = 0` and `Unacked = 0`.
-
-### 10.6 Existing and new files
-
-Modified existing files:
-
-- `pom.xml`
-- `service-facturation/pom.xml`
-- `service-facturation/src/main/java/com/billflex/facturation/service/InvoiceService.java`
-- `service-facturation/src/test/java/com/billflex/facturation/FacturationApiTest.java`
-- `service-facturation/src/test/resources/application.properties`
-- `config-repo/application.properties`
-- `README.md`
-
-Added files:
-
-- `notification-service/pom.xml`
-- `notification-service/src/main/java/com/billflex/notification/NotificationServiceApplication.java`
-- `notification-service/src/main/java/com/billflex/notification/config/RabbitConfig.java`
-- `notification-service/src/main/java/com/billflex/notification/controller/NotificationController.java`
-- `notification-service/src/main/java/com/billflex/notification/dto/ApiError.java`
-- `notification-service/src/main/java/com/billflex/notification/dto/NotificationEmailDto.java`
-- `notification-service/src/main/java/com/billflex/notification/exception/NotificationExceptionHandler.java`
-- `notification-service/src/main/java/com/billflex/notification/messaging/NotificationConsumer.java`
-- `notification-service/src/main/java/com/billflex/notification/service/NotificationService.java`
-- `notification-service/src/main/resources/application.properties`
-- `notification-service/src/test/java/com/billflex/notification/NotificationApiTest.java`
-- `notification-service/src/test/resources/application.properties`
-- `service-facturation/src/main/java/com/billflex/facturation/config/RabbitConfig.java`
-- `service-facturation/src/main/java/com/billflex/facturation/dto/NotificationEmailDto.java`
-- `service-facturation/src/main/java/com/billflex/facturation/messaging/NotificationPublisher.java`
-- `config-repo/notification-service.properties`
-- `docker-compose.yml`
-
-Documentation and test artifacts:
-
-- `docs/postman/BillFlex-v5.0.postman_collection.json`
-- `docs/postman/README.md`
-- `docs/screenshots/README-V5.md`
-- `docs/DOCUMENTATION-BILLFLEX.md`
-
-### 10.7 Jalon 5 checklist
-
-- [ ] Mailpit and RabbitMQ are started locally with the documented ports.
-- [ ] `notification-service` returns 204 for a valid manual email.
-- [ ] Invalid email and empty subject return 400.
-- [ ] SMTP failure returns 503 on the manual endpoint.
-- [ ] Invoice emission returns 200 with `EMISE`.
-- [ ] Publication happens after commit and broker failure does not change the HTTP response.
-- [ ] Unknown invoice returns 404 and invalid transition returns 409 without publication.
+- [ ] Mailpit and RabbitMQ start with Docker Compose or the documented `docker run` commands.
+- [ ] `notification-service` sends a valid email with 204 and reports validation/SMTP errors as 400/503.
+- [ ] The invoice emission publishes one JSON message only after commit.
+- [ ] Broker failure does not turn a successful invoice emission into an HTTP error.
 - [ ] Stopped-consumer messages are deferred and delivered after restart.
 - [ ] README, architecture diagram, Postman collection, and screenshot checklist are present.
 
