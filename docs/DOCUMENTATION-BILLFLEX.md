@@ -1,10 +1,10 @@
-# Bill-Flex: team documentation (Jalons 0 to 6)
+# Bill-Flex: team documentation (Jalons 0 to 5)
 
 How we built the Bill-Flex microservices project, step by step, and **why** each step was done that way, so that anyone in the team (or any AI assistant) can repeat the same method for the next jalons.
 
 - **Authors:** Othmane Lamdala, Hiba Zakari, Walid Louane
 - **Course:** J2EE avancée, 5th year IDSI (Dr. Salim Khalil)
-- **Repository:** https://github.com/othman-gr3/bill-flex (branch `main`, tags `v1.0` to `v6.0`)
+- **Repository:** https://github.com/othman-gr3/bill-flex (branch `main`, tags `v1.0` to `v5.0`)
 - **Stack:** Java 17 (target), Spring Boot 3.5.6, Spring Cloud 2025.0.0, Maven multi-module, H2, IntelliJ IDEA
 
 > Put this file in the repo as `docs/DOCUMENTATION-BILLFLEX.md` and commit it, so it travels with the code.
@@ -23,24 +23,22 @@ How we built the Bill-Flex microservices project, step by step, and **why** each
 8. [Jalon 3: Config Server (v3.0)](#8-jalon-3-config-server-v30)
 9. [Jalon 4: OpenFeign (v4.0)](#9-jalon-4-openfeign-v40)
 10. [Jalon 5: RabbitMQ and notifications (v5.0)](#10-jalon-5-rabbitmq-and-notifications-v50)
-11. [Jalon 6: resilience, error handling and idempotency (v6.0)](#11-jalon-6-resilience-error-handling-and-idempotency-v60)
-12. [Jalon 6 traps and troubleshooting](#12-jalon-6-traps-and-troubleshooting)
-13. [Glossary](#13-glossary)
-14. [Git, GitHub and GitHub Actions](#14-git-github-and-github-actions)
-15. [The method: how to do the next jalon](#15-the-method-how-to-do-the-next-jalon)
-16. [Likely next jalons and how to approach them](#16-likely-next-jalons-and-how-to-approach-them)
-17. [Problems we hit and how we fixed them](#17-problems-we-hit-and-how-we-fixed-them)
-18. [Prompt for your AI assistant](#18-prompt-for-your-ai-assistant)
+11. [Git, GitHub and GitHub Actions](#11-git-github-and-github-actions)
+12. [The method: how to do the next jalon](#12-the-method-how-to-do-the-next-jalon)
+13. [Likely next jalons and how to approach them](#13-likely-next-jalons-and-how-to-approach-them)
+14. [Problems we hit and how we fixed them](#14-problems-we-hit-and-how-we-fixed-them)
+15. [Glossary](#15-glossary)
+16. [Prompt for your AI assistant](#16-prompt-for-your-ai-assistant)
 
 ---
 
 ## 1. How to use this document
 
 - **Sections 2 to 4** are the big picture and the rules. Read them first.
-- **Sections 5 to 11** are the history: for each jalon, what the professor asked, what we built, the exact steps, and the reasoning. Use them as a recipe.
-- **Section 15** is the generic method to repeat for any new jalon.
-- **Section 17** lists the real problems we hit. Read it before you start coding, it saves hours.
-- **Section 18** is a ready-to-paste prompt that gives an AI assistant all the context of this project. Paste it at the start of every AI session.
+- **Sections 5 to 10** are the history: for each jalon, what the professor asked, what we built, the exact steps, and the reasoning. Use them as a recipe.
+- **Section 12** is the generic method to repeat for any new jalon.
+- **Section 14** lists the real problems we hit. Read it before you start coding, it saves hours.
+- **Section 16** is a ready-to-paste prompt that gives an AI assistant all the context of this project. Paste it at the start of every AI session.
 
 The professor's rule to keep in mind: *the TP is practice (not handed in), the jalon is the graded step of our own project (PFM), delivered on Git with a tag.*
 
@@ -101,7 +99,7 @@ We compared three project sheets (Bill-Flex, Stock-Alert, Quick-Ship). All three
 | `StatutClient` | ACTIF, SUSPENDU |
 | `ModePaiement` | CARTE, VIREMENT, PRELEVEMENT |
 
-### 2.5 Final repository structure (v6.0)
+### 2.5 Final repository structure (v5.0)
 
 ```
 bill-flex/
@@ -110,8 +108,8 @@ bill-flex/
 ├── .gitignore
 ├── docs/
 │   ├── DOCUMENTATION-BILLFLEX.md   (this file)
-│   ├── postman/                    (BillFlex-v1.0 to v6.0 collections)
-│   └── screenshots/                (V5 and V6 capture checklists)
+│   ├── postman/                    (BillFlex-v1.0 to v5.0 collections)
+│   └── screenshots/                (V5 capture checklist)
 ├── config-repo/                 (central configuration, read by config-server)
 │   ├── application.properties
 │   ├── service-abonnements.properties
@@ -129,8 +127,6 @@ bill-flex/
 ├── notification-service/         (8084, interne)
 ├── docker-compose.yml            (Mailpit and RabbitMQ)
 ```
-
-For V6, `service-facturation` and `service-clients` each add an `IdempotencyRecord` entity/repository; facturation also adds Actuator exposure and retry/bulkhead dependencies.
 
 Each business service has this internal layout:
 
@@ -158,7 +154,6 @@ src/test/resources/application.properties        (from Jalon 3)
 | 3 | `v3.0` | `config-repo` (global file plus one per service), Config Server, services and Gateway consuming central config | `config-repo`, `config-server`, 2-line local config, Postman v3.0 |
 | 4 | `v4.0` | OpenFeign communication | OpenFeign clients in `service-facturation` |
 | 5 | `v5.0` | Asynchronous RabbitMQ communication and notifications | `notification-service`, durable queue, Mailpit, Docker, Postman v5.0 |
-| 6 | `v6.0` | Resilience, centralized errors and idempotent creations | Retry/Circuit Breaker/Bulkhead, Actuator, `Idempotency-Key` for invoice/payment creation, Postman v6.0 |
 
 ---
 
@@ -195,7 +190,7 @@ Each teammate **owns one jalon from start to finish**: reads the professor's she
 **The one constraint: jalons are sequential.** Jalon N+1 starts from the tag of Jalon N, because it modifies files that the previous jalon created (poms, `application.properties`, `config-repo`, the README). Two people changing the same files in parallel produce conflicts and code that does not build. So:
 
 1. **Hand-off checklist.** The next owner starts only when the previous owner has: tagged and verified the tag (3.3), run `mvn clean verify` green, started the whole system, added the documentation section, and announced it in the team chat.
-2. **While waiting**, the next owner can already read the sheet, run the whole project locally, and prepare the "changes only" list with the AI prompt of section 18. Nothing is pushed to `main` before the previous tag exists.
+2. **While waiting**, the next owner can already read the sheet, run the whole project locally, and prepare the "changes only" list with the AI prompt of section 14. Nothing is pushed to `main` before the previous tag exists.
 3. **Branch per jalon** (`jalon-4`, `jalon-5`, ...), merged into `main` through a Pull Request, then tagged from `main`.
 4. **The two others review the Pull Request** and must *run* the project (start order of section 8.7), not only read the diff.
 5. **Only the current owner edits the root `pom.xml`, `config-repo/` and the README.** Everyone else leaves them alone until the tag is out.
@@ -361,7 +356,7 @@ Business services in separate IntelliJ modules, each an independent Spring Boot 
 
 3. Create each module: right-click the root -> *New -> Module -> Maven* (see the warning below), Parent = `bill-flex`, GroupId `com.billflex`, ArtifactId = module name.
 
-> **Warning (learned the hard way):** use the plain **Maven** generator, not *Spring Initializr*. Initializr creates its own package (for example `com.billflex.serviceclients`) with a second `@SpringBootApplication` and a default test. That second app starts a second Spring context on the same in-memory database and breaks the tests (see section 17). If it was generated, delete that package in both `src/main/java` and `src/test/java`.
+> **Warning (learned the hard way):** use the plain **Maven** generator, not *Spring Initializr*. Initializr creates its own package (for example `com.billflex.serviceclients`) with a second `@SpringBootApplication` and a default test. That second app starts a second Spring context on the same in-memory database and breaks the tests (see section 12). If it was generated, delete that package in both `src/main/java` and `src/test/java`.
 
 4. Add a module to the root `<modules>` only once its folder exists, otherwise Maven fails with `Child module ... does not exist`.
 
@@ -993,7 +988,7 @@ With Spring Boot 3.5.6 and Spring AMQP 3.x, the project uses `Jackson2JsonMessag
 - **After commit:** publishing before commit could leave an email for an invoice whose transaction rolls back. The callback represents only a successfully committed `EMISE` invoice.
 - **Queue on both services:** the producer declares the durable queue so it exists even when the consumer is stopped; the consumer declares the same queue so it can start independently.
 - **Explicit validation:** RabbitMQ messages do not pass through MVC `@Valid` controller binding. The consumer therefore calls `Validator` itself and rejects invalid DTOs.
-- **No Gateway route:** `notification-service` is registered in Eureka for service status, but the Gateway discovery locator excludes it. Its only HTTP controller is the manual `POST /notifications/email` check; business flow remains RabbitMQ only.
+- **No Gateway route:** `notification-service` is internal, has no Eureka client dependency, and its only controller is the manual `POST /notifications/email` check.
 - **No DLQ:** the real configuration enables three attempts at two-second intervals and `default-requeue-rejected=false`; no dead-letter exchange is configured.
 
 ### 10.5 Steps and verification
@@ -1073,120 +1068,9 @@ The required filenames and capture procedure are listed in [`docs/screenshots/RE
 ![Config Server notification](screenshots/config-server-notification-service.png)
 ![V5 architecture](screenshots/architecture-v5.png)
 
-## 11. Jalon 6: resilience, error handling and idempotency (v6.0)
+## 11. Git, GitHub and GitHub Actions
 
-### 11.1 What the professor asked
-
-The evaluation grid asks us to protect at least two Feign calls with Circuit Breaker, Retry and real connection/read timeouts; centralize HTTP errors in each service's advice; make resource creation idempotent; and demonstrate normal calls, an unavailable remote service and a replay with the same key.
-
-The scope for creation idempotency is deliberately limited to `POST /invoices` in `service-facturation` and `POST /payments` in `service-clients`. The V5 invoice emission notification is unchanged: only `PATCH /invoices/{id}/emettre` changes the state and publishes after commit.
-
-### 11.2 The idea
-
-The Feign calls to `ClientsClient.getClient` and `AbonnementsClient.getSubscription` are invoked through the Spring bean `ResilientRequests`. Its public methods use `@Retry`, `@CircuitBreaker` and `@Bulkhead`; OpenFeign uses the configured 1000 ms connect and 2000 ms read timeouts. `AbonnementsClient.getPlan` has the same tolerant protection. Strict fallbacks turn remote outages and open circuits into a local 503, while a remote 404 remains a 404.
-
-Each creation has a non-transactional coordinating service method and a separate transactional worker bean. This separation matters: it lets a duplicate-key exception roll the worker transaction back before the coordinator queries the winning record. The worker first looks up the idempotency key, then performs business checks and remote validation, saves the resource, and finally saves the idempotency record and response snapshot in the **same transaction**. A failed remote verification happens before either save, so the key is not burned.
-
-The request hash is SHA-256 over canonical JSON: object keys are sorted recursively and array order remains significant. The record has an explicit unique key and stores `request_hash`, `resource_id`, `created_at`, and `response_body`; the response snapshot is needed to reproduce the original response even if the resource changes later. A same-key/same-hash request restores that original 201 response and adds `Idempotent-Replayed: true`. A different hash produces 409. On a concurrent unique-key violation, the worker transaction rolls back and the coordinator reads the committed record to resolve it as replay or conflict.
-
-### 11.3 Real code and steps
-
-Invoice endpoint: `service-facturation/src/main/java/com/billflex/facturation/controller/InvoiceController.java` requires a nonblank `Idempotency-Key`, delegates to `InvoiceService.create`, and returns 201 with the original `Location` behavior. `InvoiceService.create` uses `Propagation.NOT_SUPPORTED`, computes the request hash, and catches a concurrent `DataIntegrityViolationException` outside the failed worker transaction. The new `InvoiceCreationTransaction.create` method is `@Transactional`: it checks the key before `existsBySubscriptionIdAndPeriode`, validates subscription and client through `ResilientRequests`, saves the invoice and then its record.
-
-Payment endpoint: `service-clients/src/main/java/com/billflex/clients/controller/PaymentController.java` and `PaymentService.create` follow the same coordinator pattern. `PaymentCreationTransaction.create` reads the existing key before checking the client, then saves the payment and record in one transaction. Each service has a local `IdempotencyRecord` entity/repository, keeping ownership independent.
-
-Configuration and observable resilience:
-
-```properties
-management.endpoints.web.exposure.include=health,info,circuitbreakers,circuitbreakerevents,retries,retryevents
-management.health.circuitbreakers.enabled=true
-resilience4j.circuitbreaker.instances.service-clients.register-health-indicator=true
-resilience4j.circuitbreaker.instances.service-abonnements.register-health-indicator=true
-```
-
-In the Config Server configuration, both breakers use a count window of 6, minimum 4 calls, 50% failure threshold and 3 half-open probes; open-state waits are 10 seconds for clients and 5 seconds for subscriptions. Retry makes 3 total attempts with 500 ms wait for `RetryableException` and Feign 503. Its aspect order wraps Circuit Breaker, which wraps Bulkhead, so each retry attempt is independently observed by the breaker. Each Bulkhead allows 10 concurrent calls with no wait. Feign 4xx responses are ignored by the breaker and are not in the retry exception list.
-
-After startup, inspect `http://localhost:8082/actuator/circuitbreakers`, `/actuator/circuitbreakerevents`, `/actuator/retries`, and `/actuator/retryevents`. The configuration is served from `config-repo/service-facturation.properties`; push that repository file to the branch used by Config Server and restart/reload configuration before starting the service.
-
-Every HTTP service has its own `@RestControllerAdvice`. V6 adds `ConstraintViolationException` → 400, a neutral generic 500 with server-side stack logging, and required-key errors → 400. Facturation also maps open circuits and full Bulkheads to 503 and Feign 409 to 409. The common response remains `ApiError(timestamp,status,error,message,details)`.
-
-### 11.4 Tests and checklist
-
-The API tests mock Feign clients and `NotificationPublisher`; test resources disable Eureka and Config Server. Added cases cover invoice/payment first creation, replay without a duplicate, a different body, missing key, invoice remote 503 followed by a same-key retry, Feign timeout, 404 without retry, and an open breaker returning a clean 503. The tests were authored but were **not run** in the editing environment.
-
-- [ ] Confirm the resolved resilience dependencies with `mvn -pl service-facturation dependency:tree | findstr "resilience4j aop aspectj"`.
-- [ ] Confirm Config Server serves `http://localhost:8888/service-facturation/default` and the file includes actuator and resilience settings.
-- [ ] Check normal invoice/payment creation and same-key replay: original 201, same ID and `Idempotent-Replayed: true`.
-- [ ] Check different request with the same key returns 409 and a missing/blank key returns 400.
-- [ ] Stop `service-abonnements`; verify invoice creation returns 503 and the same key succeeds after restart.
-- [ ] Inspect Actuator while the dependency is unavailable and verify the breaker reaches OPEN.
-- [ ] Check that V5 `PATCH /invoices/{id}/emettre` remains after-commit and still publishes asynchronously.
-- [ ] Capture the eight evidence images listed in `docs/screenshots/README-V6.md`.
-
-## 12. Jalon 6 traps and troubleshooting
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Replay returns 409 for a valid previous request | Business duplicate validation ran before key lookup | Resolve an existing key/hash before checking subscription-period uniqueness |
-| A retry after remote 503 returns a conflict for a missing key | Record insert was committed before remote validation or outside the resource transaction | Validate remotes first, then save resource and idempotency record in the worker transaction |
-| Concurrent same-key requests create a duplicate or return raw 500 | Unique violation is caught inside a rollback-only transaction, or the key column is not unique | Keep the transactional worker in a separate bean; catch the unique violation after the worker proxy returns and read the winner's record |
-| Replay body differs after a later resource update | Only the resource ID was kept and response was rebuilt from current state | Preserve the original response JSON alongside the resource ID |
-| Circuit breakers/retries are absent from Actuator | Config Server is serving stale properties, Actuator is missing, or endpoints are not exposed | Check the exposed endpoint list and Config Server response; push `config-repo` to the branch it reads |
-| Retry annotation fails at startup or is ignored | Retry/AOP classes are not on the runtime classpath, or protected work is invoked by self-invocation | Check the dependency tree and invoke public annotated methods through the injected Spring bean proxy |
-| Tests fail with config/Eureka connection errors | Test resources do not disable those clients | Keep service test `application.properties` self-contained; mock Feign and broker integrations |
-
-## 13. Glossary
-
-| Term | Meaning |
-|---|---|
-| **Jalon** | A graded milestone of the PFM, delivered on Git with a tag |
-| **PFM** | The end-of-module project (Bill-Flex) |
-| **TP** | Practice work on the professor's sample (`tp-ms-ecom`), not handed in |
-| **Microservice** | A small application that owns one business area and its data |
-| **Maven multi-module** | One parent `pom.xml` and several child modules built together |
-| **BOM** | A pom that manages dependency versions (`spring-cloud-dependencies`) |
-| **DTO** | Data Transfer Object: the shape of data in the API |
-| **Entity** | A class mapped to a database table |
-| **Repository** | Spring Data interface for database access |
-| **Eureka** | Registry where services register their name and address |
-| **Service discovery** | Finding a service by name instead of a hardcoded address |
-| **API Gateway** | Single entrance that routes requests to the services |
-| **Reactive (WebFlux)** | Non-blocking web stack used by the Gateway |
-| **Discovery locator** | Gateway feature creating one route per Eureka service |
-| **`lb://name`** | Gateway URI meaning load-balance through Eureka |
-| **Config Server** | Serves configuration files from a Git repository |
-| **config-repo** | Repository folder holding the central configuration |
-| **Bootstrap problem** | Eureka and Config Server cannot get their own config from Config Server |
-| **Fail-fast** | A service refuses to start when it cannot get its configuration |
-| **OpenFeign** | Declarative HTTP client between services |
-| **Circuit Breaker** | Stops calls to a failing dependency; states are CLOSED, OPEN and HALF_OPEN |
-| **Retry** | Repeats a failed call when its exception is configured as transient |
-| **Bulkhead** | Limits concurrent calls to isolate a dependency and cap resource use |
-| **Fallback** | Alternate method called after a protected operation fails or is rejected |
-| **Timeout** | Maximum time allowed for a connection or response; Feign connect/read timeout is real HTTP-client configuration |
-| **Actuator** | Spring Boot operational endpoints for health, resilience state and events |
-| **Idempotency-Key** | Client-supplied key that makes a repeated creation request return its original result |
-| **Canonical JSON** | Stable JSON representation used for request hashing, with object keys sorted |
-| **Idempotent** | A repeated request with the same key and body has the effect of one creation |
-| **Kafka / event** | Asynchronous messaging technology and the message passed between services |
-| **RabbitMQ** | AMQP broker that stores and delivers the notification JSON message |
-| **Broker** | Messaging server that accepts, stores and delivers messages |
-| **Producer** | Component that publishes a message; here `service-facturation` |
-| **AMQP** | Protocol used by producer and consumer to communicate with RabbitMQ |
-| **Queue** | Durable ordered buffer; `notifications.email` holds emails while the consumer is stopped |
-| **Durable queue** | Queue whose declaration survives a broker restart |
-| **Ack** | Acknowledgement that a consumer successfully handled a message |
-| **DLQ** | Dead-letter queue; none is configured in this milestone |
-| **Mailpit** | Local SMTP server and web inbox used to inspect test emails |
-| **SMTP** | Protocol used to transfer email from notification-service to Mailpit |
-| **After commit** | Transaction callback executed only after the invoice database transaction succeeds |
-| **Consumer** | Component that reads a queue and processes its message |
-| **Tag (`v1.0`)** | A named Git pointer to a commit, what the professor grades |
-| **CI** | Automatic build and tests on every push (GitHub Actions) |
-
-## 14. Git, GitHub and GitHub Actions
-
-### 14.1 What we do on GitHub
+### 11.1 What we do on GitHub
 
 1. **Repository** `othman-gr3/bill-flex`, public (the Config Server needs to clone it without credentials), collaborators added in *Settings -> Collaborators*.
 2. **Commits and tags** exactly as in section 3. Tags appear in the *Tags* page (`https://github.com/othman-gr3/bill-flex/tags`). The professor checks the tag, so always verify that it points to the final commit.
@@ -1200,7 +1084,7 @@ The API tests mock Feign clients and `NotificationPublisher`; test resources dis
    .mvn/wrapper/maven-wrapper.jar
    ```
 
-### 14.2 GitHub Actions (continuous integration)
+### 11.2 GitHub Actions (continuous integration)
 
 > **Note for the author before sharing this document:** the Jalon 1 to 3 deliverables were built and tagged with manual Git commands (section 3). No workflow file was produced in those steps. The workflow below is the **recommended** one. If your repository already has a `.github/workflows/*.yml` that you wrote yourself, **replace this section with the content of your file** and explain what it does.
 
@@ -1255,25 +1139,25 @@ Limits to know: the workflow builds and tests; it does not start the whole syste
 
 ---
 
-## 15. The method: how to do the next jalon
+## 12. The method: how to do the next jalon
 
 This is the loop we followed three times. Follow it again, in this order.
 
-### 15.1 Before coding
+### 12.1 Before coding
 
 1. **Read the professor's sheet** (objective, deliverables, the example repo tag) and copy the deliverables into a checklist. A jalon is graded on those bullets, nothing else.
 2. **Check the previous tag.** `git rev-list -n 1 vX.0` must equal the commit you consider final, and the previous jalon must still run.
 3. **List the changes before writing code:** *new modules*, *new files*, *modified files* (we always produced this "changes only" list, it avoids forgetting a pom or a property).
 4. **Announce in the team chat that you own this jalon**, and check that nobody else is editing the root `pom.xml`, `config-repo/` or the README meanwhile (see 3.2).
 
-### 15.2 Build, smallest step first
+### 12.2 Build, smallest step first
 
 5. Create the new module or code in this order: pom -> main class -> configuration -> logic -> tests.
 6. **Configuration rule since Jalon 3:** a new application keeps only `spring.application.name` and `spring.config.import=configserver:http://localhost:8888` locally. Its port, database and other settings go into `config-repo/<name>.properties`, and `config-repo` is **pushed to GitHub before** you start the Config Server.
 7. **Test rule:** each service has `src/test/resources/application.properties` so tests never depend on Eureka or the Config Server.
 8. Add to the root `pom.xml` `<modules>` only after the folder exists.
 
-### 15.3 Prove it works
+### 12.3 Prove it works
 
 9. Run `mvn clean verify`: green.
 10. Start the whole system in order (Eureka -> Config Server -> services -> Gateway) and check Eureka.
@@ -1281,13 +1165,13 @@ This is the loop we followed three times. Follow it again, in this order.
 12. Do the **demo the sheet asks for** (dynamic discovery, aggregation, ...). Take screenshots into `docs/screenshots/`.
 13. **Regression:** the URLs of the previous jalons still answer.
 
-### 15.4 Deliver
+### 12.4 Deliver
 
 14. Update the README (architecture diagram, ports table, start order, URLs).
 15. Commit with the standard message, push, create the tag, **verify the tag** (3.3), and check the *Tags* page on GitHub.
 16. Update this documentation with a new section for the jalon (what, how, why, problems).
 
-### 15.5 Design principles we keep
+### 12.5 Design principles we keep
 
 - **One service, one database, one responsibility.** No JPA relation across services.
 - **Request and response DTOs**, never entities in controllers.
@@ -1299,11 +1183,11 @@ This is the loop we followed three times. Follow it again, in this order.
 
 ---
 
-## 16. Likely next jalons and how to approach them
+## 13. Likely next jalons and how to approach them
 
 > These are our **expectation**, based on the Bill-Flex project sheet (synchronous calls, asynchronous events, bonus). Always follow the professor's actual jalon sheet; if it differs, the sheet wins.
 
-### 16.1 Synchronous calls with OpenFeign
+### 13.1 Synchronous calls with OpenFeign
 
 From the sheet: `service-facturation` calls `service-abonnements` (is the subscription ACTIVE, which plan) before computing an invoice, and `service-clients` (VAT number, payment mode) before moving an invoice to `EMISE`.
 
@@ -1323,7 +1207,7 @@ How we would do it:
 5. Tests: mock the Feign client with `@MockitoBean` (or WireMock) so unit tests need no other service.
 6. Postman: a scenario that creates an invoice for an `ACTIVE` subscription (ok) and for a missing/terminated one (error).
 
-### 16.2 Asynchronous events with Kafka
+### 13.2 Asynchronous events with Kafka
 
 From the sheet: `subscription-renewed` (abonnements -> facturation creates a `BROUILLON` invoice), `invoice-issued` (facturation -> clients notifies and creates a pending `Payment`), `payment-received` (clients -> facturation sets the invoice `PAYEE`).
 
@@ -1336,18 +1220,18 @@ How we would do it:
 5. Consider the **Outbox pattern** so the database update and the event cannot diverge.
 6. Tests with Embedded Kafka or Testcontainers; keep ordinary unit tests free of a running broker.
 
-### 16.3 Bonus items
+### 13.3 Bonus items
 
 - Monthly batch job: automatic reminders for `EN_RETARD` invoices (Spring Scheduler or Spring Batch).
 - Angular dashboard of monthly recurring revenue (MRR), served through the Gateway (remember CORS).
 
-### 16.4 Per-jalon rule of thumb
+### 13.4 Per-jalon rule of thumb
 
 Same loop as section 10: write the changes-only list, implement, test, Postman, demo, README, commit, tag, verify.
 
 ---
 
-## 17. Problems we hit and how we fixed them
+## 14. Problems we hit and how we fixed them
 
 | # | Symptom | Cause | Fix |
 |---|---|---|---|
@@ -1380,7 +1264,7 @@ Same loop as section 10: write the changes-only list, implement, test, Postman, 
 | 27 | `Failed to check/redeclare auto-delete queue(s)` in the listener log | RabbitMQ is unreachable because the container is stopped or the served host/credentials are wrong | run `docker start rabbitmq`, check the RabbitMQ properties served by Config Server, and let the listener reconnect |
 | 28 | Professor TP names do not resolve in this project | Boot 3.x/Spring AMQP 3.x uses different names from the Boot 4 TP | use `Jackson2JsonMessageConverter`, `retry.max-attempts`, and the project's web starter; do not copy the TP's converter, retry, or webmvc names |
 | 29 | Notification is published for a transaction that later rolls back | publication was placed after `save()` but before commit | keep publication in `TransactionSynchronization.afterCommit`, not immediately after `repository.save()` |
-| 30 | Internal notification endpoint is reachable through the Gateway | notification-service was included in dynamic Gateway discovery routing | keep the Eureka registration for status, but exclude notification-service from Gateway routes |
+| 30 | Internal notification endpoint is reachable through the Gateway | notification-service was registered or routed as a public service | keep it without Eureka and do not add a Gateway route |
 | 31 | Unit tests require RabbitMQ | tests started the listener or depended on a live broker | keep broker auto-start disabled in test resources and mock the mail sender/publisher |
 
 **Harmless messages (do not waste time on them):**
@@ -1393,7 +1277,51 @@ Same loop as section 10: write the changes-only list, implement, test, Postman, 
 
 ---
 
-## 18. Prompt for your AI assistant
+## 15. Glossary
+
+| Term | Meaning |
+|---|---|
+| **Jalon** | a graded milestone of the PFM, delivered on Git with a tag |
+| **PFM** | the end-of-module project (Bill-Flex) |
+| **TP** | practice work on the professor's sample (`tp-ms-ecom`), not handed in |
+| **Microservice** | a small application that owns one business area and its data |
+| **Maven multi-module** | one parent `pom.xml` and several child modules built together |
+| **BOM** | a pom that only manages dependency versions (`spring-cloud-dependencies`) |
+| **DTO** | Data Transfer Object: the shape of data in the API (request/response) |
+| **Entity** | a class mapped to a database table |
+| **Repository** | Spring Data interface for database access |
+| **Eureka** | registry where services register their name and address |
+| **Service discovery** | finding a service by name instead of a hardcoded address |
+| **API Gateway** | single entrance that routes requests to services |
+| **Reactive (WebFlux)** | non-blocking web stack used by the Gateway |
+| **Discovery locator** | Gateway feature creating one route per Eureka service |
+| **`lb://name`** | Gateway URI meaning "load-balance through Eureka" |
+| **Config Server** | serves configuration files from a Git repository |
+| **config-repo** | the folder of the repo holding the central configuration |
+| **Bootstrap problem** | Eureka and Config Server cannot get their own config from the Config Server |
+| **Fail-fast** | the service refuses to start when it cannot get its config |
+| **OpenFeign** | declarative HTTP client between services (next jalon, probably) |
+| **Kafka / event** | asynchronous messaging between services (next jalon, probably) |
+| **RabbitMQ** | AMQP broker that stores and delivers the notification JSON message |
+| **Broker** | messaging server that accepts, stores, and delivers messages |
+| **Producer** | component that publishes a message; here `service-facturation` |
+| **AMQP** | protocol used by the producer and consumer to communicate with RabbitMQ |
+| **Queue** | durable ordered buffer; here `notifications.email` holds emails while the consumer is stopped |
+| **Durable queue** | queue whose declaration survives broker restart |
+| **Ack** | acknowledgement that a consumer has successfully handled a message |
+| **Retry** | another delivery attempt after a consumer failure |
+| **DLQ** | dead-letter queue; none is configured in this jalon |
+| **Mailpit** | local SMTP server and web inbox used to inspect test emails |
+| **SMTP** | protocol used to transfer the email from notification-service to Mailpit |
+| **After commit** | transaction callback executed only after the invoice database transaction succeeds |
+| **Consumer** | notification component that reads a queue and sends the email |
+| **Idempotent** | processing the same message twice has the same effect as once |
+| **Tag (`v1.0`)** | a named Git pointer to a commit, what the professor grades |
+| **CI** | automatic build and tests on every push (GitHub Actions) |
+
+---
+
+## 16. Prompt for your AI assistant
 
 Paste the block below **at the start of every AI session** (ChatGPT, Claude, Copilot, ...) before asking for anything. It gives the assistant the whole context, the conventions, the traps and the working rules. Then add your request using one of the templates at the end.
 
@@ -1420,7 +1348,7 @@ Rule: one invoice = 1 subscription + 1 client + 1 period + 1 total amount TTC.
 - Configuration in .properties files (not yaml). Lombok allowed. DTOs are Java records.
 - H2 in-memory database per business service. springdoc-openapi-starter-webmvc-ui 2.8.9.
 
-## 3. Applications (current state: Jalons 1 to 6 are DONE and tagged v1.0 to v6.0)
+## 3. Applications (current state: Jalons 1 to 5 are DONE and tagged v1.0 to v5.0)
 | Module | spring.application.name | Port | Role |
 | service-abonnements | service-abonnements | 8081 | Plan, Subscription |
 | service-facturation | service-facturation | 8082 | Invoice, InvoiceLine (main service) |
@@ -1428,7 +1356,7 @@ Rule: one invoice = 1 subscription + 1 client + 1 period + 1 total amount TTC.
 | eureka-server       | eureka-server       | 8761 | service registry |
 | gateway-service     | gateway-service     | 8080 | reactive Spring Cloud Gateway (WebFlux), dynamic routing /<service-name>/** |
 | config-server       | config-server       | 8888 | Spring Cloud Config Server reading folder config-repo of the GitHub repo, branch main |
-| notification-service | notification-service | 8084 | internal email consumer; Eureka registration is enabled, Gateway route is excluded |
+| notification-service | notification-service | 8084 | internal email consumer; no Eureka registration and no Gateway route |
 | RabbitMQ            | Docker container      | 5672 / 15672 UI | local AMQP broker and management UI |
 | Mailpit             | Docker container      | 1025 SMTP / 8025 UI | local SMTP server and inbox |
 Base packages: com.billflex.abonnements, .facturation, .clients, .eurekaserver, .gateway, .configserver, .notification.
@@ -1492,8 +1420,6 @@ reached as /service-clients/clients, /service-abonnements/plans, /service-factur
 4. Gateway 404/503: service not yet registered (wait ~30 s), name not lowercase, or service down.
 5. Config Server serving nothing: config-repo not pushed, wrong file name (must equal spring.application.name).
 6. Tags must point to the final commit; verify with: git rev-list -n 1 vX.0 == git log --oneline -1.
-7. Idempotency records must commit atomically with the created invoice/payment; check the key before business-level uniqueness and resolve key races only after the losing transaction rolls back.
-8. The notification flow remains emission-only: do not publish RabbitMQ messages from invoice creation or a replay.
 
 ## 8. Git rules
 - Do NOT run git commands. Give me the commands to run.
@@ -1522,7 +1448,7 @@ reached as /service-clients/clients, /service-abonnements/plans, /service-factur
 Reply "Context loaded" and wait for my jalon sheet.
 ````
 
-### 18.1 Request templates (paste after the context prompt)
+### 16.1 Request templates (paste after the context prompt)
 
 **Start a new jalon**
 ```text
@@ -1532,7 +1458,7 @@ Current state: v3.0 (or the last tag) is done and working.
 Give me the "changes only" list first, then the code, then the test and Git steps.
 ```
 
-**OpenFeign (completed in Jalon 4)**
+**OpenFeign (probable next jalon)**
 ```text
 Jalon: synchronous communication with OpenFeign.
 service-facturation must call service-abonnements (is the subscription ACTIVE and which plan) before computing

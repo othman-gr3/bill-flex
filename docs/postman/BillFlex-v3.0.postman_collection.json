@@ -1,0 +1,252 @@
+{
+  "info": {
+    "name": "Bill-Flex v3.0 - Config Server",
+    "description": "Vérifie la configuration centralisée du Config Server et les API directes et via la Gateway. Démarrer Eureka, Config Server, les services métier et la Gateway avant l'exécution.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "configServer",
+      "value": "http://localhost:8888"
+    },
+    {
+      "key": "gateway",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "clients",
+      "value": "http://localhost:8083"
+    },
+    {
+      "key": "abonnements",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "facturation",
+      "value": "http://localhost:8082"
+    }
+  ],
+  "item": [
+    {
+      "name": "Config Server - agrégation des propriétés",
+      "item": [
+        {
+          "name": "Configuration service-clients - 200, 2 sources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{configServer}}/service-clients/default"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Les configurations globale et spécifique sont agrégées', function () { pm.expect(body.propertySources).to.have.lengthOf(2); });",
+                  "pm.test('La configuration spécifique contient le port et la base clients', function () { pm.expect(body.propertySources[0].source['server.port']).to.eql(8083); pm.expect(body.propertySources[0].source['spring.datasource.url']).to.eql('jdbc:h2:mem:clientsdb'); });",
+                  "pm.test('La configuration globale contient Eureka', function () { pm.expect(body.propertySources[1].source['eureka.client.service-url.defaultZone']).to.eql('http://localhost:8761/eureka/'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Configuration service-abonnements - 200, 2 sources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{configServer}}/service-abonnements/default"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Les configurations globale et spécifique sont agrégées', function () { pm.expect(body.propertySources).to.have.lengthOf(2); });",
+                  "pm.test('La configuration spécifique contient le port et la base abonnements', function () { pm.expect(body.propertySources[0].source['server.port']).to.eql(8081); pm.expect(body.propertySources[0].source['spring.datasource.url']).to.eql('jdbc:h2:mem:abonnementsdb'); });",
+                  "pm.test('La configuration globale contient Eureka', function () { pm.expect(body.propertySources[1].source['eureka.client.service-url.defaultZone']).to.eql('http://localhost:8761/eureka/'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Configuration service-facturation - 200, 2 sources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{configServer}}/service-facturation/default"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Les configurations globale et spécifique sont agrégées', function () { pm.expect(body.propertySources).to.have.lengthOf(2); });",
+                  "pm.test('La configuration spécifique contient le port et la base facturation', function () { pm.expect(body.propertySources[0].source['server.port']).to.eql(8082); pm.expect(body.propertySources[0].source['spring.datasource.url']).to.eql('jdbc:h2:mem:facturationdb'); });",
+                  "pm.test('La configuration globale contient Eureka', function () { pm.expect(body.propertySources[1].source['eureka.client.service-url.defaultZone']).to.eql('http://localhost:8761/eureka/'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Configuration gateway-service - 200, 2 sources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{configServer}}/gateway-service/default"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Les configurations globale et spécifique sont agrégées', function () { pm.expect(body.propertySources).to.have.lengthOf(2); });",
+                  "pm.test('La configuration Gateway contient le port 8080', function () { pm.expect(body.propertySources[0].source['server.port']).to.eql(8080); });",
+                  "pm.test('Le routage dynamique par découverte est activé', function () { pm.expect(String(body.propertySources[0].source['spring.cloud.gateway.server.webflux.discovery.locator.enabled'])).to.eql('true'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "API métier - appels directs",
+      "item": [
+        {
+          "name": "Lister les plans - service-abonnements:8081",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{abonnements}}/plans"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lister les factures - service-facturation:8082",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{facturation}}/invoices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lister les clients - service-clients:8083",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{clients}}/clients"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "API métier - appels via Gateway",
+      "item": [
+        {
+          "name": "Lister les plans via Gateway - 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gateway}}/service-abonnements/plans"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lister les factures via Gateway - 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gateway}}/service-facturation/invoices"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lister les clients via Gateway - 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gateway}}/service-clients/clients"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
